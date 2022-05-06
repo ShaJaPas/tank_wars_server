@@ -50,7 +50,7 @@ pub struct Model{
 
     pub trophies: u32,
 
-    pub tanks: Tank
+    //pub tanks: Tank
     //tanks, daily_items,
 }
 

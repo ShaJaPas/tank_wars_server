@@ -156,10 +156,3 @@ impl Server {
         Err(eyre!("unable to get project dirs"))
     }
 }
-
-///Returns local IpAddr(192.168..)
-#[allow(dead_code)]
-pub fn get_local_ip() -> Result<IpAddr> {
-    use local_ip_address::local_ip;
-    Ok(local_ip()?)
-}

@@ -12,7 +12,11 @@ lazy_static::lazy_static! {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Packet {
-    SignIn {
-        id: String
+    SignInRequest {
+        os_id: String,
+        client_id: Option<i64>
+    },
+    SignInResponse {
+        client_id: i64
     },
 }

@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     )?;
     let db = db::get_connection().await?.get_database_backend();
 
-    println!("{:?}", db.build(&Schema::new(db).create_table_from_entity(data::PLayer)).sql);
+    println!("{:?}", db.build(&Schema::new(db).create_table_from_entity(data::Player)).sql);
 
     let mut server = Server::new(args.port, args.keylog);
     server.start().await?;

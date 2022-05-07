@@ -1,8 +1,9 @@
 mod player;
 mod tank;
+mod daily_item;
 
-pub use player::Entity as Player;
 pub use tank::Tank;
+pub use daily_item::DailyItem;
 
 use serde::{Serialize, Deserialize};
 

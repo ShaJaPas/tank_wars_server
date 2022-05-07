@@ -1,23 +1,19 @@
-
-pub use sea_orm;
-
 use chrono::{DateTime, Utc};
-use sea_orm::entity::prelude::*;
 use serde::{Serialize, Deserialize};
 
 use super::Tank;
+use super::DailyItem;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "player")]
-pub struct Model{
-    #[sea_orm(primary_key, indexed, auto_increment = false)]
+#[derive(Serialize, Deserialize, Queryable)]
+pub struct Player{
     #[serde(skip)]
-    pub id: String,
+    pub id: i64,
 
-    #[sea_orm(column_type = "DateTime")]
+    #[serde(skip)]
+    pub machine_id: String,
+
     pub reg_date: DateTime<Utc>,
 
-    #[sea_orm(column_type = "DateTime")]
     pub last_online: DateTime<Utc>,
 
     pub nickname: String,
@@ -36,7 +32,6 @@ pub struct Model{
     #[serde(skip)]
     pub diamonds: u32,
 
-    #[sea_orm(column_type = "DateTime")]
     #[serde(skip, default = "default_daily_items_time")]
     pub daily_items_time: DateTime<Utc>,
 
@@ -50,15 +45,11 @@ pub struct Model{
 
     pub trophies: u32,
 
-    //pub tanks: Tank
-    //tanks, daily_items,
+    pub tanks: Tank,
+
+    pub daily_items: DailyItem,
 }
 
 fn default_daily_items_time() -> DateTime<Utc>{
     Utc::now()
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
-
-impl ActiveModelBehavior for ActiveModel {}

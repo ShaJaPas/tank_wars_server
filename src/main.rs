@@ -1,10 +1,13 @@
+#[macro_use]
+extern crate diesel;
+
 mod network;
 mod data;
-mod db;
+//mod db;
 
 use argh::FromArgs;
+use barrel::{Migration, backend::Pg};
 use color_eyre::eyre::Result;
-use sea_orm::{Schema, ConnectionTrait};
 
 use crate::network::Server;
 
@@ -30,9 +33,14 @@ async fn main() -> Result<()> {
             .with_max_level(tracing::Level::INFO)
             .finish(),
     )?;
-    let db = db::get_connection().await?.get_database_backend();
+    //let db = db::get_connection().await?.get_database_backend();
 
-    println!("{:?}", db.build(&Schema::new(db).create_table_from_entity(data::Player)).sql);
+    let mut migr = Migration::new();
+    migr.create_table("players", |t| {
+        t.add_column("id", barrel::types::custom("BIGINT").primary(true));
+        
+    });
+    println!("{}", migr.make::<Pg>());
 
     let mut server = Server::new(args.port, args.keylog);
     server.start().await?;

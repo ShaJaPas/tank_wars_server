@@ -28,11 +28,12 @@ dashmap = "5.3.3"
 
 lazy_static = "1.4.0"
 
-sea-orm = { version = "0.7.1", features = ["sqlx-postgres", "runtime-tokio-rustls"]}
-
-chrono = "0.4.19"
+chrono = {version = "0.4.19", features = ["serde"] }
 
 rs-snowflake = "0.6.0"
+
+diesel = { version = "1.4.8", features = ["postgres"] }
+barrel = { version = "0.7.0", features = ["pg"] }
 
 [profile.release]
 strip = true

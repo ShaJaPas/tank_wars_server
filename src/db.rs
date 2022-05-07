@@ -1,14 +1,12 @@
-use std::time::Duration;
+use std::{time::Duration, fmt::Debug};
 
-use sea_orm::{DatabaseConnection, Database, ConnectOptions};
+use diesel::{PgConnection, r2d2::{PooledConnection, ConnectionManager, Pool}};
+use tracing::info;
 
-pub async fn get_connection() -> color_eyre::Result<DatabaseConnection>{
-    let mut opt = ConnectOptions::new("postgres://konstantin:123@localhost/test".to_owned());
-
-    opt.connect_timeout(Duration::from_secs(8))
-        .max_lifetime(Duration::from_secs(8))
-        .sqlx_logging(true);
-
-    let db: DatabaseConnection = Database::connect(opt).await?;
-    Ok(db)
+pub fn get_pooled_connection(database_url: &str) -> color_eyre::Result<PooledConnection<ConnectionManager<PgConnection>>> {
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    let pool = Pool::builder().build(manager)?;
+    let conn = pool.clone().get_timeout(Duration::from_secs(8))?;
+    info!("created connection pool for PostgreSQL {:?}", Pool::<ConnectionManager<PgConnection>>::builder());
+    Ok(conn)
 }

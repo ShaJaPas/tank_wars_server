@@ -16,7 +16,7 @@ pub struct Player{
 
     pub last_online: DateTime<Utc>,
 
-    pub nickname: String,
+    pub nickname: Option<String>,
 
     pub battles_count: u32,
 
@@ -35,7 +35,7 @@ pub struct Player{
     #[serde(skip, default = "default_daily_items_time")]
     pub daily_items_time: DateTime<Utc>,
 
-    pub friends_ids: String,
+    pub friends_nicks: Vec<String>,
 
     pub accuracy: f32,
 
@@ -45,9 +45,9 @@ pub struct Player{
 
     pub trophies: u32,
 
-    pub tanks: Tank,
+    pub tanks: Vec<Tank>,
 
-    pub daily_items: DailyItem,
+    pub daily_items: Vec<DailyItem>,
 }
 
 fn default_daily_items_time() -> DateTime<Utc>{

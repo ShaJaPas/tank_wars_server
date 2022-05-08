@@ -1,4 +1,4 @@
-use crate::data::{CLIENTS};
+use crate::data::CLIENTS;
 
 use std::{net::IpAddr, sync::Arc};
 
@@ -72,10 +72,9 @@ impl Server {
             info!("established");
 
             assert!(CLIENTS.insert(conn.connection.stable_id(), 0).is_none());
-            
+
             // Each stream initiated by the client constitutes a new request.
             while let Some(stream) = conn.bi_streams.next().await {
-
                 let stream = match stream {
                     Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                         info!("connection closed by peer");
@@ -87,7 +86,7 @@ impl Server {
                     }
                     Ok(s) => s,
                 };
-                
+
                 let fut = Self::handle_request(stream);
                 tokio::spawn(
                     async move {
@@ -106,11 +105,13 @@ impl Server {
         Ok(())
     }
 
-    async fn handle_request((mut send, mut recv): (quinn::SendStream, quinn::RecvStream)) -> Result<()> {
+    async fn handle_request(
+        (mut send, mut recv): (quinn::SendStream, quinn::RecvStream),
+    ) -> Result<()> {
         let mut buf = vec![0u8; EXPECTED_MTU];
         //let mut serializer = rmp_serde::Serializer::new(&mut buf);
-        while let Ok(Some(len)) = recv.read(&mut buf).await{
-            if len != 0{
+        while let Ok(Some(len)) = recv.read(&mut buf).await {
+            if len != 0 {
                 println!("{:?}", len);
             }
         }
@@ -136,7 +137,7 @@ impl Server {
                 Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
                     info!("generating self-signed certificate");
                     let cert =
-                        rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+                        rcgen::generate_simple_self_signed(vec!["localhost".into(), "tank_wars".into()]).unwrap();
                     let key = cert.serialize_private_key_der();
                     let cert = cert.serialize_der().unwrap();
                     tokio::fs::create_dir_all(&path).await?;

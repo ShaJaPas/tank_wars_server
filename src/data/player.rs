@@ -1,11 +1,11 @@
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use super::Tank;
 use super::DailyItem;
+use super::Tank;
 
 #[derive(Serialize, Deserialize, Queryable)]
-pub struct Player{
+pub struct Player {
     #[serde(skip)]
     pub id: i64,
 
@@ -50,6 +50,6 @@ pub struct Player{
     pub daily_items: Vec<DailyItem>,
 }
 
-fn default_daily_items_time() -> DateTime<Utc>{
+fn default_daily_items_time() -> DateTime<Utc> {
     Utc::now()
 }

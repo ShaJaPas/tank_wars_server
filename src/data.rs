@@ -2,8 +2,9 @@ mod daily_item;
 mod player;
 mod tank;
 
-pub use daily_item::DailyItem;
-pub use tank::Tank;
+pub use daily_item::*;
+pub use tank::*;
+pub use player::*;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +19,9 @@ pub enum Packet {
         client_id: Option<i64>,
     },
     SignInResponse {
-        client_id: i64,
+        client_id: Option<i64>,
     },
 }
+
+#[allow(dead_code)]
+pub const LOGIN_STREAM_ID : u64 = 0;

@@ -1,11 +1,15 @@
-use crate::data::CLIENTS;
+use crate::data::{CLIENTS, self};
 
-use std::{net::IpAddr, sync::Arc};
+use std::sync::Arc;
 
 use color_eyre::eyre::{bail, eyre, Result};
 use futures::{StreamExt, TryFutureExt};
 use rustls::{Certificate, PrivateKey};
-use tracing::{error, info, info_span, Instrument};
+use tracing::{error, info, info_span, Instrument, warn};
+use rmp_serde::{Deserializer, Serializer};
+use serde::{Deserialize, Serialize};
+use crate::schema::players;
+use diesel::{prelude::*, debug_query, pg::Pg};
 
 #[allow(unused)]
 pub const ALPN_QUIC_TANK_WARS: &[&[u8]] = &[b"tank-wars-prot", b"hq-29"];
@@ -42,6 +46,14 @@ impl Server {
         self.port = endpoint.local_addr()?.port();
         info!("listening on {}", endpoint.local_addr()?);
 
+        let player = data::Player::default();
+        use diesel::prelude::*;
+        use crate::schema::players::dsl::*;
+
+        let a = players.filter(id.eq(0))
+            .limit(5)
+            .load::<data::Player>(crate::db::POOL.get().unwrap())?;
+        println!("{:?}", a);
         while let Some(conn) = incoming.next().await {
             info!("connection incoming");
             let fut = Self::handle_connection(conn);
@@ -106,16 +118,28 @@ impl Server {
     }
 
     async fn handle_request(
-        (mut send, mut recv): (quinn::SendStream, quinn::RecvStream),
+        (mut send, recv): (quinn::SendStream, quinn::RecvStream),
     ) -> Result<()> {
-        let mut buf = vec![0u8; EXPECTED_MTU];
-        //let mut serializer = rmp_serde::Serializer::new(&mut buf);
-        while let Ok(Some(len)) = recv.read(&mut buf).await {
-            if len != 0 {
-                println!("{:?}", len);
-            }
+        let mut buf = Vec::with_capacity(EXPECTED_MTU);
+        let mut serializer = Serializer::new(&mut buf);
+        match send.id().index(){
+            data::LOGIN_STREAM_ID => {
+                let data = recv.read_to_end(EXPECTED_MTU).await?;
+                let packet = data::Packet::deserialize(&mut Deserializer::new(data.as_slice()))?;
+                if let data::Packet::SignInRequest { os_id, client_id} = packet{
+                    let mut packet = data::Packet::SignInResponse { client_id: None };
+                    if client_id.is_none() {
+                        packet = data::Packet::SignInResponse { client_id: Some(0) };
+                        println!("sign up");
+                    }
+                    packet.serialize(&mut serializer)?;
+                    send.write_all(&buf).await?;
+                } else {
+                    error!("Wrong data came from {} stream!", send.id().index());
+                }
+            },
+            _ => {todo!()}
         }
-
         Ok(())
     }
 

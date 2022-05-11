@@ -4,6 +4,7 @@ extern crate diesel;
 mod data;
 mod db;
 mod network;
+mod schema;
 
 use std::str::FromStr;
 
@@ -33,7 +34,11 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
+
     let args: Cli = argh::from_env();
+    db::POOL.get_or(||{
+        PgConnection::establish(&args.db_url).unwrap()
+    });
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .on_thread_start(move || {

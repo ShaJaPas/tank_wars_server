@@ -1,10 +1,14 @@
 use std::io::Write;
 
-use diesel::{serialize, pg::Pg, deserialize, sql_types, types::{ToSql, FromSql, IsNull}};
+use diesel::{
+    deserialize,
+    pg::Pg,
+    serialize, sql_types,
+    types::{FromSql, IsNull, ToSql},
+};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Default, Clone)]
-#[derive(Debug, FromSqlRow, AsExpression)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug, FromSqlRow, AsExpression)]
 #[sql_type = "DbDailyItem"]
 pub struct DailyItem {
     pub price: i32,
@@ -25,11 +29,11 @@ impl ToSql<DbDailyItem, Pg> for DailyItem {
         ToSql::<sql_types::Oid, Pg>::to_sql(&23, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&4, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&self.price, out)?;
-        
+
         ToSql::<sql_types::Oid, Pg>::to_sql(&23, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&4, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&self.tank_id, out)?;
-        
+
         ToSql::<sql_types::Oid, Pg>::to_sql(&23, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&4, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&self.count, out)?;
@@ -50,7 +54,7 @@ impl FromSql<DbDailyItem, Pg> for DailyItem {
         let count = &bytes[36..40];
         let bought = &bytes[48..49];
 
-        Ok(DailyItem{
+        Ok(DailyItem {
             price: FromSql::<sql_types::Integer, Pg>::from_sql(Some(price))?,
             tank_id: FromSql::<sql_types::Integer, Pg>::from_sql(Some(tank_id))?,
             count: FromSql::<sql_types::Integer, Pg>::from_sql(Some(count))?,
@@ -58,4 +62,3 @@ impl FromSql<DbDailyItem, Pg> for DailyItem {
         })
     }
 }
-

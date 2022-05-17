@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use argh::FromArgs;
 use color_eyre::eyre::Result;
-use diesel::{PgConnection, Connection};
+use diesel::{Connection, PgConnection};
 
 use crate::network::Server;
 
@@ -34,17 +34,12 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
-
     let args: Cli = argh::from_env();
-    db::POOL.get_or(||{
-        PgConnection::establish(&args.db_url).unwrap()
-    });
+    db::POOL.get_or(|| PgConnection::establish(&args.db_url).unwrap());
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .on_thread_start(move || {
-            db::POOL.get_or(||{
-                PgConnection::establish(&args.db_url).unwrap()
-            });
+            db::POOL.get_or(|| PgConnection::establish(&args.db_url).unwrap());
         })
         .build()
         .expect("Failed building the Runtime")
@@ -56,7 +51,7 @@ fn main() -> Result<()> {
                     .with_max_level(tracing::Level::INFO)
                     .finish(),
             )?;
-            //let db = db::get_connection().await?.get_database_backend();
+
             let mut server = Server::new(args.port, args.keylog);
             server.start().await?;
 

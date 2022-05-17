@@ -1,10 +1,14 @@
 use std::io::Write;
 
-use diesel::{serialize, pg::Pg, deserialize, sql_types, types::{ToSql, FromSql, IsNull}};
+use diesel::{
+    deserialize,
+    pg::Pg,
+    serialize, sql_types,
+    types::{FromSql, IsNull, ToSql},
+};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Default, Clone)]
-#[derive(Debug, FromSqlRow, AsExpression)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug, FromSqlRow, AsExpression)]
 #[sql_type = "DbTank"]
 pub struct Tank {
     pub id: i32,
@@ -26,7 +30,7 @@ impl ToSql<DbTank, Pg> for Tank {
         ToSql::<sql_types::Oid, Pg>::to_sql(&23, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&4, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&self.id, out)?;
-        
+
         ToSql::<sql_types::Oid, Pg>::to_sql(&23, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&4, out)?;
         ToSql::<sql_types::Integer, Pg>::to_sql(&self.level, out)?;
@@ -46,7 +50,7 @@ impl FromSql<DbTank, Pg> for Tank {
         let level = &bytes[24..28];
         let count = &bytes[36..40];
 
-        Ok(Tank{
+        Ok(Tank {
             id: FromSql::<sql_types::Integer, Pg>::from_sql(Some(id))?,
             level: FromSql::<sql_types::Integer, Pg>::from_sql(Some(level))?,
             count: FromSql::<sql_types::Integer, Pg>::from_sql(Some(count))?,

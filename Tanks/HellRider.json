@@ -1,0 +1,27 @@
+{
+    "characteristics": {
+        "bodyRotateDegrees": 130,
+        "bulletSpeed": 340,
+        "gunRotateDegrees": 200,
+        "name": "HellRider",
+        "rarity": "RARE",
+        "reloading": 3.2,
+        "velocity": 130,
+        "damage": 20,
+        "hp": 80
+    },
+    "graphicsInfo": {
+        "gunOriginX": 13,
+        "gunOriginY": 14,
+        "gunX": 24,
+        "gunY": 41,
+        "bulletX": 39,
+        "bulletY": 74,
+        "bulletName": "2 (3)",
+        "tankGunName": "4",
+        "tankBodyName": "3",
+        "tankWidth":76,
+        "tankHeight":80
+    },
+    "id": 3
+}

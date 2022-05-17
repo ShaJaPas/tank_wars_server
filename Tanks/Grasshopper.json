@@ -1,0 +1,27 @@
+{
+    "characteristics": {
+        "bodyRotateDegrees": 90,
+        "bulletSpeed": 300,
+        "gunRotateDegrees": 180,
+        "name": "Grasshopper",
+        "rarity": "COMMON",
+        "reloading": 2.5,
+        "velocity": 100,
+        "damage": 14,
+        "hp": 120
+    },
+    "graphicsInfo": {
+        "gunOriginX": 12,
+        "gunOriginY": 22,
+        "gunX": 30,
+        "gunY": 18,
+        "bulletX": 34,
+        "bulletY": 77,
+        "bulletName": "2 (2)",
+        "tankGunName": "2 (2)",
+        "tankBodyName": "1",
+        "tankWidth":84,
+        "tankHeight":80
+    },
+    "id": 1
+}

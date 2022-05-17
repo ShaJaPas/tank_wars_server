@@ -1,0 +1,27 @@
+{
+    "characteristics": {
+        "bodyRotateDegrees": 50,
+        "bulletSpeed": 250,
+        "gunRotateDegrees": 80,
+        "name": "Titan",
+        "rarity": "MYTHICAL",
+        "reloading": 5.8,
+        "velocity": 50,
+        "damage": 42,
+        "hp": 240
+    },
+    "graphicsInfo": {
+        "gunOriginX": 17,
+        "gunOriginY": 30,
+        "gunX": 34,
+        "gunY": 21,
+        "bulletX": 32,
+        "bulletY": 76,
+        "bulletName": "4",
+        "tankGunName": "9",
+        "tankBodyName": "8",
+        "tankWidth":104,
+        "tankHeight":104
+    },
+    "id": 6
+}

@@ -1,0 +1,27 @@
+{
+    "characteristics": {
+        "bodyRotateDegrees": 120,
+        "bulletSpeed": 190,
+        "gunRotateDegrees": 75,
+        "name": "Sandstorm",
+        "rarity": "COMMON",
+        "reloading": 5.2,
+        "velocity": 110,
+        "damage": 27,
+        "hp": 100
+    },
+    "graphicsInfo": {
+        "gunOriginX": 15,
+        "gunOriginY": 10,
+        "gunX": 26,
+        "gunY": 29,
+        "bulletX": 30,
+        "bulletY": 74,
+        "bulletName": "3",
+        "tankGunName": "3",
+        "tankBodyName": "2",
+        "tankWidth":84,
+        "tankHeight":80
+    },
+    "id": 2
+}

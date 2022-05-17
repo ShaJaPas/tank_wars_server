@@ -1,15 +1,16 @@
-use crate::data::{CLIENTS, self};
+use crate::{
+    data::{self, Client, Player, CLIENTS},
+    db,
+};
 
 use std::sync::Arc;
 
 use color_eyre::eyre::{bail, eyre, Result};
 use futures::{StreamExt, TryFutureExt};
-use rustls::{Certificate, PrivateKey};
-use tracing::{error, info, info_span, Instrument, warn};
 use rmp_serde::{Deserializer, Serializer};
+use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
-use crate::schema::players;
-use diesel::{prelude::*, debug_query, pg::Pg};
+use tracing::{error, info, info_span, warn, Instrument};
 
 #[allow(unused)]
 pub const ALPN_QUIC_TANK_WARS: &[&[u8]] = &[b"tank-wars-prot", b"hq-29"];
@@ -46,20 +47,20 @@ impl Server {
         self.port = endpoint.local_addr()?.port();
         info!("listening on {}", endpoint.local_addr()?);
 
-        let player = data::Player::default();
-        use diesel::prelude::*;
-        use crate::schema::players::dsl::*;
-
-        let a = players.filter(id.eq(0))
-            .limit(5)
-            .load::<data::Player>(crate::db::POOL.get().unwrap())?;
-        println!("{:?}", a);
         while let Some(conn) = incoming.next().await {
             info!("connection incoming");
-            let fut = Self::handle_connection(conn);
             tokio::spawn(async move {
-                if let Err(e) = fut.await {
-                    error!("connection failed: {reason}", reason = e.to_string())
+                if let Ok(conn) = conn.await {
+                    let id = conn.connection.stable_id();
+                    let fut = Self::handle_connection(conn);
+                    tokio::spawn(async move {
+                        if let Err(e) = fut.await {
+                            assert!(CLIENTS.remove(&id).is_some());
+                            error!("connection failed: {reason}", reason = e.to_string());
+                        }
+                    });
+                } else {
+                    error!("failed to open NewConnection");
                 }
             });
         }
@@ -67,8 +68,7 @@ impl Server {
         Ok(())
     }
 
-    async fn handle_connection(conn: quinn::Connecting) -> Result<()> {
-        let mut conn = conn.await?;
+    async fn handle_connection(mut conn: quinn::NewConnection) -> Result<()> {
         let span = info_span!(
             "connection",
             remote = %conn.connection.remote_address(),
@@ -83,7 +83,9 @@ impl Server {
         async {
             info!("established");
 
-            assert!(CLIENTS.insert(conn.connection.stable_id(), 0).is_none());
+            assert!(CLIENTS
+                .insert(conn.connection.stable_id(), Client::default())
+                .is_none());
 
             // Each stream initiated by the client constitutes a new request.
             while let Some(stream) = conn.bi_streams.next().await {
@@ -99,7 +101,7 @@ impl Server {
                     Ok(s) => s,
                 };
 
-                let fut = Self::handle_request(stream);
+                let fut = Self::handle_request(stream, conn.connection.stable_id());
                 tokio::spawn(
                     async move {
                         if let Err(e) = fut.await {
@@ -119,26 +121,90 @@ impl Server {
 
     async fn handle_request(
         (mut send, recv): (quinn::SendStream, quinn::RecvStream),
+        conn_id: usize,
     ) -> Result<()> {
         let mut buf = Vec::with_capacity(EXPECTED_MTU);
         let mut serializer = Serializer::new(&mut buf);
-        match send.id().index(){
+        match send.id().index() {
             data::LOGIN_STREAM_ID => {
                 let data = recv.read_to_end(EXPECTED_MTU).await?;
                 let packet = data::Packet::deserialize(&mut Deserializer::new(data.as_slice()))?;
-                if let data::Packet::SignInRequest { os_id, client_id} = packet{
-                    let mut packet = data::Packet::SignInResponse { client_id: None };
+                if let data::Packet::SignInRequest { os_id, client_id } = packet {
                     if client_id.is_none() {
-                        packet = data::Packet::SignInResponse { client_id: Some(0) };
-                        println!("sign up");
+                        let id = db::ID_GEN.lock().await.real_time_generate();
+                        let packet = data::Packet::SignInResponse {
+                            client_id: Some(id),
+                        };
+                        let player = Player::new(id, os_id);
+                        db::save(player)?;
+                        CLIENTS.get_mut(&conn_id).unwrap().id = id;
+                        info!("client sign up");
+                        packet.serialize(&mut serializer)?;
+                        send.write_all(&buf).await?;
+                    } else {
+                        if db::os_id_matches(client_id.unwrap(), os_id)? {
+                            let packet = data::Packet::SignInResponse { client_id };
+                            CLIENTS.get_mut(&conn_id).unwrap().id = client_id.unwrap();
+                            info!("client sign in");
+                            packet.serialize(&mut serializer)?;
+                            send.write_all(&buf).await?;
+                        } else {
+                            let packet = data::Packet::SignInResponse { client_id: None };
+                            warn!("client sign in error");
+                            packet.serialize(&mut serializer)?;
+                            send.write_all(&buf).await?;
+                        }
                     }
+                } else {
+                    error!("Wrong data came from {} stream!", send.id().index());
+                }
+            }
+            data::DATA_SYNC_STREAM_ID => {
+                let data = recv.read_to_end(usize::MAX).await?;
+                let packet = data::Packet::deserialize(&mut Deserializer::new(data.as_slice()))?;
+                if let data::Packet::FilesSyncRequest { file_names } = packet {
+                    let mut files = Vec::new();
+                    if let Ok(mut dir) = tokio::fs::read_dir("Tanks").await {
+                        while let Ok(Some(entry)) = dir.next_entry().await {
+                            if entry.path().is_file()
+                                && entry.path().extension().map_or(false, |v| v == "json")
+                            {
+                                let path = entry.path();
+                                let path = path.as_os_str().to_str().unwrap();
+                                let mut value = file_names
+                                    .get(path)
+                                    .map_or(Vec::<u8>::new(), |v| v.to_vec());
+                                
+                                let signature = if value.len() != 0 {
+                                    fast_rsync::Signature::deserialize(&value)?
+                                } else {
+                                    fast_rsync::Signature::calculate(
+                                        &Vec::new(),
+                                        &mut value,
+                                        fast_rsync::SignatureOptions {
+                                            block_size: 64,
+                                            crypto_hash_size: 5,
+                                        },
+                                    )
+                                };
+
+                                let content = tokio::fs::read(path).await?;
+                                let mut patch = Vec::new();
+                                fast_rsync::diff(&signature.index(), &content, &mut patch)?;
+                                files.push((path.to_owned(), patch));
+                            }
+                        }
+                    }
+                    let packet = data::Packet::FilesSyncResponse { file_names: files };
                     packet.serialize(&mut serializer)?;
                     send.write_all(&buf).await?;
                 } else {
                     error!("Wrong data came from {} stream!", send.id().index());
                 }
-            },
-            _ => {todo!()}
+            }
+            _ => {
+                todo!()
+            }
         }
         Ok(())
     }
@@ -160,8 +226,11 @@ impl Server {
                 Ok(x) => x,
                 Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
                     info!("generating self-signed certificate");
-                    let cert =
-                        rcgen::generate_simple_self_signed(vec!["localhost".into(), "tank_wars".into()]).unwrap();
+                    let cert = rcgen::generate_simple_self_signed(vec![
+                        "localhost".into(),
+                        "tank_wars".into(),
+                    ])
+                    .unwrap();
                     let key = cert.serialize_private_key_der();
                     let cert = cert.serialize_der().unwrap();
                     tokio::fs::create_dir_all(&path).await?;

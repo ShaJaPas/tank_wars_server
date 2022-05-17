@@ -1,0 +1,27 @@
+{
+    "characteristics": {
+        "bodyRotateDegrees": 70,
+        "bulletSpeed": 270,
+        "gunRotateDegrees": 160,
+        "name": "A.Q.U.A.",
+        "rarity": "COMMON",
+        "reloading": 3.8,
+        "velocity": 60,
+        "damage": 23,
+        "hp": 180
+    },
+    "graphicsInfo": {
+        "gunOriginX": 11,
+        "gunOriginY": 15,
+        "gunX": 30,
+        "gunY": 30,
+        "bulletX": 34,
+        "bulletY": 79,
+        "bulletName": "1 (4)",
+        "tankGunName": "1 (4)",
+        "tankBodyName": "4",
+        "tankWidth":84,
+        "tankHeight":84
+    },
+    "id": 4
+}

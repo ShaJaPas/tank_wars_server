@@ -1,0 +1,27 @@
+{
+    "characteristics": {
+        "bodyRotateDegrees": 40,
+        "bulletSpeed": 220,
+        "gunRotateDegrees": 120,
+        "name": "Forwarder",
+        "rarity": "EPIC",
+        "reloading": 3,
+        "velocity": 175,
+        "damage": 28,
+        "hp": 140
+    },
+    "graphicsInfo": {
+        "gunOriginX": 12,
+        "gunOriginY": 21,
+        "gunX": 29,
+        "gunY": 20,
+        "bulletX": 31,
+        "bulletY": 68,
+        "bulletName": "4",
+        "tankGunName": "5",
+        "tankBodyName": "5",
+        "tankWidth":84,
+        "tankHeight":80
+    },
+    "id": 5
+}

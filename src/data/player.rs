@@ -1,4 +1,5 @@
-use chrono::{NaiveDate, NaiveTime, NaiveDateTime};
+use chrono::Utc;
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};
 
 use super::DailyItem;
@@ -52,32 +53,47 @@ pub struct Player {
     pub daily_items: Vec<DailyItem>,
 }
 
-fn default_naive_date_time() -> NaiveDateTime{
-    NaiveDateTime::new(NaiveDate::from_ymd(1970, 1, 1), NaiveTime::from_hms(0, 0, 0))
+fn default_naive_date_time() -> NaiveDateTime {
+    NaiveDateTime::new(
+        NaiveDate::from_ymd(1970, 1, 1),
+        NaiveTime::from_hms(0, 0, 0),
+    )
 }
 
-impl Default for Player{
-    fn default() -> Self {
-        Player {
-            id: 0,
-            machine_id: String::new(),
-            reg_date: default_naive_date_time(),
-            last_online: default_naive_date_time(),
+impl Player {
+    pub fn new(id: i64, machine_id: String) -> Self {
+        Self {
+            id,
+            machine_id,
+            reg_date: Utc::now().naive_utc(),
+            last_online: Utc::now().naive_utc(),
             nickname: None,
             battles_count: 0,
             victories_count: 0,
             xp: 0,
-            rank_level: 0,
+            rank_level: 1,
             coins: 0,
             diamonds: 0,
-            daily_items_time: default_naive_date_time(),
+            daily_items_time: Utc::now().naive_utc(),
             friends_nicks: Vec::new(),
             accuracy: 0.,
             damage_dealt: 0,
             damage_taken: 0,
             trophies: 0,
-            tanks: [Tank::default()].to_vec(),
-            daily_items: [DailyItem::default()].to_vec(),
+            tanks: Vec::new(),
+            daily_items: Vec::new(),
+        }
+    }
+
+    pub fn get_efficiency(&self) -> f32 {
+        let res = (self.victories_count as f32) / (self.battles_count as f32)
+            * (self.accuracy + 0.5)
+            * (self.damage_dealt as f32)
+            / (self.damage_taken as f32);
+        if res.is_normal() {
+            res
+        } else {
+            0f32
         }
     }
 }

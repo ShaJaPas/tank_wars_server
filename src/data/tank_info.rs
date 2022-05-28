@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use strum::EnumIter;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +39,7 @@ pub struct TankCharacteristics {
     pub damage: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, EnumIter)]
 pub enum TankRarity {
     COMMON,
     RARE,
@@ -48,7 +49,7 @@ pub enum TankRarity {
 }
 
 impl TankRarity {
-    fn value(&self) -> f32 {
+    pub fn value(&self) -> f32 {
         match *self {
             Self::COMMON => 60.0,
             Self::RARE => 15.0,

@@ -1,9 +1,11 @@
 use chrono::Utc;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 
-use super::DailyItem;
 use super::Tank;
+use super::{DailyItem, TankRarity, WeightedRandomList};
 use crate::schema::players;
 
 #[derive(Serialize, Deserialize, Queryable, Insertable, Debug)]
@@ -62,7 +64,7 @@ fn default_naive_date_time() -> NaiveDateTime {
 
 impl Player {
     pub fn new(id: i64, machine_id: String) -> Self {
-        Self {
+        let mut res = Self {
             id,
             machine_id,
             reg_date: Utc::now().naive_utc(),
@@ -82,7 +84,9 @@ impl Player {
             trophies: 0,
             tanks: Vec::new(),
             daily_items: Vec::new(),
-        }
+        };
+        res.daily_items = res.get_daily_items();
+        res
     }
 
     pub fn get_efficiency(&self) -> f32 {
@@ -95,5 +99,39 @@ impl Player {
         } else {
             0f32
         }
+    }
+
+    pub fn get_daily_items(&self) -> Vec<DailyItem> {
+        let mut gen = rand::thread_rng();
+        let mut result = Vec::with_capacity(4);
+        unsafe {
+            result.set_len(4);
+        }
+        let tanks = super::TANKS.get();
+        for (i, rarity) in TankRarity::iter().take(4).enumerate() {
+            let mut list = WeightedRandomList::new();
+            for x in tanks.iter().filter(|x| x.characteristics.rarity == rarity) {
+                list.add_entry(x, rarity.value());
+            }
+            let id = list.get_random().unwrap().id as i32;
+            if self.tanks.iter().any(|x| x.id == id) {
+                result[i] = DailyItem {
+                    price: gen.gen_range(40..=50),
+                    tank_id: id,
+                    count: gen.gen_range(40..=50),
+                    bought: false,
+                };
+            } else {
+                let price = 60 * (TankRarity::COMMON.value() / rarity.value()).sqrt() as i32;
+                result[i] = DailyItem {
+                    price: gen.gen_range(price..=(price as f32 * 1.1) as i32),
+                    tank_id: id,
+                    count: 0,
+                    bought: false,
+                };
+            }
+        }
+
+        result
     }
 }

@@ -27,6 +27,12 @@ impl Server {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        CLIENTS.set(dashmap::DashMap::new());
+        db::ID_GEN.set({
+            let gen = snowflake::SnowflakeIdGenerator::new(1, 1);
+            tokio::sync::Mutex::new(gen)
+        });
+
         let (certs, key) = Self::get_certs().await?;
 
         let mut server_crypto = rustls::ServerConfig::builder()
@@ -55,7 +61,7 @@ impl Server {
                     let fut = Self::handle_connection(conn);
                     tokio::spawn(async move {
                         if let Err(e) = fut.await {
-                            assert!(CLIENTS.remove(&id).is_some());
+                            assert!(CLIENTS.get().remove(&id).is_some());
                             error!("connection failed: {reason}", reason = e.to_string());
                         }
                     });
@@ -84,6 +90,7 @@ impl Server {
             info!("established");
 
             assert!(CLIENTS
+                .get()
                 .insert(conn.connection.stable_id(), Client::default())
                 .is_none());
 
@@ -92,7 +99,7 @@ impl Server {
                 let stream = match stream {
                     Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                         info!("connection closed by peer");
-                        assert!(CLIENTS.remove(&conn.connection.stable_id()).is_some());
+                        assert!(CLIENTS.get().remove(&conn.connection.stable_id()).is_some());
                         return Ok(());
                     }
                     Err(e) => {
@@ -131,20 +138,20 @@ impl Server {
                 let packet = data::Packet::deserialize(&mut Deserializer::new(data.as_slice()))?;
                 if let data::Packet::SignInRequest { os_id, client_id } = packet {
                     if client_id.is_none() {
-                        let id = db::ID_GEN.lock().await.real_time_generate();
+                        let id = db::ID_GEN.get().lock().await.real_time_generate();
                         let packet = data::Packet::SignInResponse {
                             client_id: Some(id),
                         };
                         let player = Player::new(id, os_id);
                         db::save(player)?;
-                        CLIENTS.get_mut(&conn_id).unwrap().id = id;
+                        CLIENTS.get().get_mut(&conn_id).unwrap().id = id;
                         info!("client sign up");
                         packet.serialize(&mut serializer)?;
                         send.write_all(&buf).await?;
                     } else {
                         if db::os_id_matches(client_id.unwrap(), os_id)? {
                             let packet = data::Packet::SignInResponse { client_id };
-                            CLIENTS.get_mut(&conn_id).unwrap().id = client_id.unwrap();
+                            CLIENTS.get().get_mut(&conn_id).unwrap().id = client_id.unwrap();
                             info!("client sign in");
                             packet.serialize(&mut serializer)?;
                             send.write_all(&buf).await?;
@@ -174,7 +181,7 @@ impl Server {
                                 let mut value = file_names
                                     .get(path)
                                     .map_or(Vec::<u8>::new(), |v| v.to_vec());
-                                
+
                                 let signature = if value.len() != 0 {
                                     fast_rsync::Signature::deserialize(&value)?
                                 } else {

@@ -35,16 +35,37 @@ struct Cli {
 
 fn main() -> Result<()> {
     let args: Cli = argh::from_env();
-    db::POOL.get_or(|| PgConnection::establish(&args.db_url).unwrap());
+
+    db::POOL.set(move || PgConnection::establish(&args.db_url).unwrap());
+    db::POOL.get();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .on_thread_start(move || {
-            db::POOL.get_or(|| PgConnection::establish(&args.db_url).unwrap());
+            db::POOL.get();
         })
         .build()
         .expect("Failed building the Runtime")
         .block_on(async {
             color_eyre::install()?;
+
+            let result: Result<Vec<data::TankInfo>> = (async {
+                let mut res = Vec::new();
+                if let Ok(mut dir) = tokio::fs::read_dir("Tanks").await {
+                    while let Ok(Some(entry)) = dir.next_entry().await {
+                        if entry.path().is_file()
+                            && entry.path().extension().map_or(false, |v| v == "json")
+                        {
+                            let content = tokio::fs::read(entry.path()).await?;
+                            let value: data::TankInfo = serde_json::from_slice(&content)?;
+                            res.push(value);
+                        }
+                    }
+                }
+                Ok(res)
+            })
+            .await;
+
+            data::TANKS.set(result?);
 
             tracing::subscriber::set_global_default(
                 tracing_subscriber::FmtSubscriber::builder()

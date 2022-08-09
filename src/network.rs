@@ -1,21 +1,27 @@
 use crate::{
-    data::{self, Client, Player, CLIENTS},
+    data::{
+        self, BalancerCommand, Chest, ChestName, Client, Player, CLIENTS, MATCHMAKER,
+        NICKNAME_REGEX, PHYSICS,
+    },
     db,
+    physics::{self, BalancedPlayer},
 };
 
-use std::sync::Arc;
+use std::{io::Cursor, str::FromStr, sync::Arc};
 
 use color_eyre::eyre::{bail, eyre, Result};
 use futures::{StreamExt, TryFutureExt};
+use minstant::Instant;
 use rmp_serde::{Deserializer, Serializer};
 use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, info_span, warn, Instrument};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tracing::{debug, error, info, info_span, warn, Instrument};
 
 #[allow(unused)]
-pub const ALPN_QUIC_TANK_WARS: &[&[u8]] = &[b"tank-wars-prot", b"hq-29"];
+pub const ALPN_QUIC_TANK_WARS: &[&[u8]] = &[b"tank-wars-prot"];
 pub const EXPECTED_MTU: usize = 1350;
-
+pub const TWELVE_HOURS: i64 = 12 * 60 * 60;
 pub struct Server {
     port: u16,
     key_log: bool,
@@ -28,9 +34,22 @@ impl Server {
 
     pub async fn start(&mut self) -> Result<()> {
         CLIENTS.set(dashmap::DashMap::new());
+        NICKNAME_REGEX.set(regex::Regex::new(r"[a-zA-Z]\w{5,14}").unwrap());
         db::ID_GEN.set({
             let gen = snowflake::SnowflakeIdGenerator::new(1, 1);
             tokio::sync::Mutex::new(gen)
+        });
+
+        //Balancer initialization
+        let (send, recv) = tokio::sync::mpsc::unbounded_channel::<BalancerCommand>();
+        let p_send = physics::start();
+        MATCHMAKER.set(move || send.clone());
+        PHYSICS.set(move || p_send.clone());
+        tokio::spawn(async move {
+            let fut = Self::balance_players(recv);
+            if let Err(e) = fut.await {
+                error!("{}", e);
+            }
         });
 
         let (certs, key) = Self::get_certs().await?;
@@ -61,7 +80,11 @@ impl Server {
                     let fut = Self::handle_connection(conn);
                     tokio::spawn(async move {
                         if let Err(e) = fut.await {
-                            assert!(CLIENTS.get().remove(&id).is_some());
+                            let client = CLIENTS.get().remove(&id).unwrap();
+                            MATCHMAKER
+                                .get()
+                                .send(BalancerCommand::RemovePlayer(client.1.id))
+                                .unwrap();
                             error!("connection failed: {reason}", reason = e.to_string());
                         }
                     });
@@ -74,6 +97,65 @@ impl Server {
         Ok(())
     }
 
+    //Simple balancer, gets two players with diff <= 60.
+    //Prefers player with lowest number
+    //Number only increments, so it is limited to i32::MAX_VALUE
+    //TODO: improve
+    async fn balance_players(mut recv: UnboundedReceiver<BalancerCommand>) -> Result<()> {
+        const DIFF: u32 = 60;
+        let mut number = 0;
+        let mut list: Vec<(BalancedPlayer, i32)> = Vec::new();
+        while let Some(x) = recv.recv().await {
+            match x {
+                BalancerCommand::AddPlayer {
+                    player,
+                    tank_id,
+                    conn,
+                } => {
+                    if list.iter().any(|f| f.0 .0.id == player.id) {
+                        continue;
+                    }
+                    list.push((BalancedPlayer(player, tank_id, conn), number));
+                    number += 1;
+                    list.sort_by(|a, b| a.0 .0.trophies.cmp(&b.0 .0.trophies));
+                    for i in 0..list.len() {
+                        let mut best_match: Option<&(BalancedPlayer, i32)> = None;
+                        for j in (i + 1)..list.len() {
+                            if list[j].0 .0.trophies.abs_diff(list[i].0 .0.trophies) <= DIFF {
+                                if best_match.is_none() || list[j].1 < best_match.unwrap().1 {
+                                    best_match = Some(&list[j]);
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        if best_match.is_some() {
+                            let index = list
+                                .iter()
+                                .position(|f| f.0 .0.id == list[i].0 .0.id)
+                                .unwrap();
+                            let id = best_match.unwrap().0 .0.id;
+                            let player1 = list.remove(index).0;
+                            let index = list.iter().position(|f| f.0 .0.id == id).unwrap();
+                            let player2 = list.remove(index).0;
+                            PHYSICS
+                                .get()
+                                .send(physics::PhysicsCommand::CreateMatch {
+                                    players: (player1, player2),
+                                })
+                                .unwrap();
+                        }
+                    }
+                }
+                BalancerCommand::RemovePlayer(id) => {
+                    if let Some(index) = list.iter().position(|f| f.0 .0.id == id) {
+                        list.remove(index);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     async fn handle_connection(mut conn: quinn::NewConnection) -> Result<()> {
         let span = info_span!(
             "connection",
@@ -91,33 +173,90 @@ impl Server {
 
             assert!(CLIENTS
                 .get()
-                .insert(conn.connection.stable_id(), Client::default())
+                .insert(conn.connection.stable_id(), Client {
+                    id: 0
+                })
                 .is_none());
 
-            // Each stream initiated by the client constitutes a new request.
-            while let Some(stream) = conn.bi_streams.next().await {
-                let stream = match stream {
-                    Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                        info!("connection closed by peer");
-                        assert!(CLIENTS.get().remove(&conn.connection.stable_id()).is_some());
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        return Err(e);
-                    }
-                    Ok(s) => s,
-                };
+            loop{
+                tokio::select! {
+                    biased;
 
-                let fut = Self::handle_request(stream, conn.connection.stable_id());
-                tokio::spawn(
-                    async move {
-                        if let Err(e) = fut.await {
-                            error!("failed: {reason}", reason = e.to_string());
-                        }
-                    }
-                    .instrument(info_span!("bidi_request")),
-                );
+                    Some(stream) = conn.bi_streams.next() => {
+                        let stream = match stream {
+                            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                                info!("connection closed by peer");
+                                assert!(CLIENTS.get().remove(&conn.connection.stable_id()).is_some());
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                return Err(e);
+                            }
+                            Ok(s) => s,
+                        };
+
+                        let fut = Self::handle_request(stream, conn.connection.clone());
+                        tokio::spawn(
+                            async move {
+                                let instant = Instant::now();
+                                match fut.await {
+                                    Err(e) => error!("failed: {reason}", reason = e.to_string()),
+                                    Ok(name) => debug!("Request {name} handled in {:?}", instant.elapsed()),
+                                }
+                            }
+                            .instrument(info_span!("bidi_request")),
+                        );
+                    },
+
+                    Some(stream) = conn.uni_streams.next() => {
+                        let stream = match stream {
+                            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                                info!("connection closed by peer");
+                                let client = CLIENTS.get().remove(&conn.connection.stable_id()).unwrap();
+                                MATCHMAKER.get().send(BalancerCommand::RemovePlayer(client.1.id)).unwrap();
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                return Err(e);
+                            }
+                            Ok(s) => s,
+                        };
+
+                        let fut = Self::handle_uni_stream(stream, conn.connection.clone());
+                        tokio::spawn(
+                            async move {
+                                let instant = Instant::now();
+                                match fut.await {
+                                    Err(e) => error!("failed: {reason}", reason = e.to_string()),
+                                    Ok(name) => {
+                                        let elapsed = instant.elapsed();
+                                        debug!("Request {name} handled in {:?}", elapsed);
+                                    }
+                                }
+                            }
+                            .instrument(info_span!("bidi_request")),
+                        );
+                    },
+
+                    Some(stream) = conn.datagrams.next() => {
+                        let _bytes = match stream {
+                            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                                info!("connection closed by peer");
+                                assert!(CLIENTS.get().remove(&conn.connection.stable_id()).is_some());
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                return Err(e);
+                            }
+                            Ok(s) => s,
+                        };
+
+                    },
+
+                    else => break,
+                }
             }
+
             Ok(())
         }
         .instrument(span)
@@ -126,94 +265,316 @@ impl Server {
         Ok(())
     }
 
-    async fn handle_request(
-        (mut send, recv): (quinn::SendStream, quinn::RecvStream),
-        conn_id: usize,
-    ) -> Result<()> {
-        let mut buf = Vec::with_capacity(EXPECTED_MTU);
-        let mut serializer = Serializer::new(&mut buf);
-        match send.id().index() {
-            data::LOGIN_STREAM_ID => {
-                let data = recv.read_to_end(EXPECTED_MTU).await?;
-                let packet = data::Packet::deserialize(&mut Deserializer::new(data.as_slice()))?;
-                if let data::Packet::SignInRequest { os_id, client_id } = packet {
-                    if client_id.is_none() {
-                        let id = db::ID_GEN.get().lock().await.real_time_generate();
-                        let packet = data::Packet::SignInResponse {
-                            client_id: Some(id),
-                        };
-                        let player = Player::new(id, os_id);
-                        db::save(player)?;
-                        CLIENTS.get().get_mut(&conn_id).unwrap().id = id;
-                        info!("client sign up");
+    async fn handle_uni_stream(recv: quinn::RecvStream, conn: quinn::Connection) -> Result<String> {
+        let data = recv.read_to_end(usize::MAX).await.unwrap();
+        let packet = data::Packet::deserialize(&mut Deserializer::new(data.as_slice()))?;
+        let enum_name = packet.to_string();
+        match packet {
+            data::Packet::GetChestRequest { name } => match name {
+                ChestName::COMMON => {
+                    let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);
+                    if id.is_none() {
+                        error!("unauthorized access");
+                        return Ok(enum_name);
+                    }
+                    let mut buf = Vec::new();
+                    let mut serializer = Serializer::new(&mut buf);
+                    let mut player = db::get_player_by_id(id.unwrap()).unwrap();
+                    if player.coins >= ChestName::COMMON as i32 {
+                        player.coins -= ChestName::COMMON as i32;
+                        let chest = Chest::generate_random_loot(ChestName::COMMON, &player);
+                        chest.add_to_player(&mut player);
+                        let packet = data::Packet::GetChestResponse { chest };
                         packet.serialize(&mut serializer)?;
+                        let mut send = conn.open_uni().await?;
                         send.write_all(&buf).await?;
-                    } else {
-                        if db::os_id_matches(client_id.unwrap(), os_id)? {
-                            let packet = data::Packet::SignInResponse { client_id };
-                            CLIENTS.get().get_mut(&conn_id).unwrap().id = client_id.unwrap();
+                        send.finish().await?;
+                        player.check_daily_items();
+                        db::update_player(&player)?;
+                    }
+                }
+                _ => unimplemented!(),
+            },
+            data::Packet::JoinMatchMakerRequest { id: tank_id } => {
+                let client = CLIENTS.get().get(&conn.stable_id());
+                let id = client.as_ref().map(|f| f.id);
+                let conn = conn.clone();
+                if id.is_none() {
+                    error!("unauthorized access");
+                    return Ok(enum_name);
+                }
+                let player = db::get_player_by_id(id.unwrap()).unwrap();
+                MATCHMAKER
+                    .get()
+                    .send(BalancerCommand::AddPlayer {
+                        player: Box::new(player),
+                        tank_id,
+                        conn,
+                    })
+                    .unwrap();
+            }
+            data::Packet::LeaveMatchMakerRequest => {
+                let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);
+                if id.is_none() {
+                    error!("unauthorized access");
+                    return Ok(enum_name);
+                }
+                MATCHMAKER
+                    .get()
+                    .send(BalancerCommand::RemovePlayer(id.unwrap()))
+                    .unwrap();
+            }
+            _ => {
+                error!("wrong packet came from uni stream!");
+            }
+        }
+        Ok(enum_name)
+    }
+
+    async fn handle_request(
+        (mut send, mut recv): (quinn::SendStream, quinn::RecvStream),
+        conn: quinn::Connection,
+    ) -> Result<String> {
+        let mut data = Vec::with_capacity(EXPECTED_MTU);
+        let mut enum_name = String::new();
+        while let Some(chunk) = recv.read_chunk(usize::MAX, true).await? {
+            data.extend(chunk.bytes);
+            let mut de = Deserializer::new(Cursor::new(&data));
+            if let Ok(packet) = data::Packet::deserialize(&mut de) {
+                let size: usize = de.position() as usize;
+                enum_name = packet.to_string();
+                data.drain(0..size);
+                match packet {
+                    data::Packet::SignInRequest { os_id, client_id } => {
+                        let mut buf = Vec::new();
+                        let mut serializer = Serializer::new(&mut buf);
+                        if client_id.is_none() {
+                            let id = db::ID_GEN.get().lock().await.real_time_generate();
+                            let player = Player::new(id, os_id);
+                            db::save(&player)?;
+                            CLIENTS.get().get_mut(&conn.stable_id()).unwrap().id = id;
+                            info!("client sign up");
+                            let packet = data::Packet::SignInResponse {
+                                client_id: Some(id),
+                                profile: Some(player),
+                            };
+                            packet.serialize(&mut serializer)?;
+                            send.write_all(&buf).await?;
+                        } else if db::os_id_matches(client_id.unwrap(), os_id)? {
+                            CLIENTS.get().get_mut(&conn.stable_id()).unwrap().id =
+                                client_id.unwrap();
                             info!("client sign in");
+                            let mut player = db::get_player_by_id(client_id.unwrap()).unwrap();
+
+                            //check daily items
+                            let time = chrono::Utc::now().naive_utc();
+                            if (time - player.daily_items_time).num_seconds() >= TWELVE_HOURS {
+                                player.daily_items_time = time;
+                                player.daily_items = player.get_daily_items();
+                                db::update_player(&player)?;
+                            }
+
+                            let packet = data::Packet::SignInResponse {
+                                client_id,
+                                profile: Some(player),
+                            };
                             packet.serialize(&mut serializer)?;
                             send.write_all(&buf).await?;
                         } else {
-                            let packet = data::Packet::SignInResponse { client_id: None };
+                            let packet = data::Packet::SignInResponse {
+                                client_id: None,
+                                profile: None,
+                            };
                             warn!("client sign in error");
                             packet.serialize(&mut serializer)?;
                             send.write_all(&buf).await?;
                         }
                     }
-                } else {
-                    error!("Wrong data came from {} stream!", send.id().index());
-                }
-            }
-            data::DATA_SYNC_STREAM_ID => {
-                let data = recv.read_to_end(usize::MAX).await?;
-                let packet = data::Packet::deserialize(&mut Deserializer::new(data.as_slice()))?;
-                if let data::Packet::FilesSyncRequest { file_names } = packet {
-                    let mut files = Vec::new();
-                    if let Ok(mut dir) = tokio::fs::read_dir("Tanks").await {
-                        while let Ok(Some(entry)) = dir.next_entry().await {
-                            if entry.path().is_file()
-                                && entry.path().extension().map_or(false, |v| v == "json")
-                            {
-                                let path = entry.path();
-                                let path = path.as_os_str().to_str().unwrap();
-                                let mut value = file_names
-                                    .get(path)
-                                    .map_or(Vec::<u8>::new(), |v| v.to_vec());
+                    data::Packet::FilesSyncRequest { file_names } => {
+                        let mut buf = Vec::new();
+                        let mut serializer = Serializer::new(&mut buf);
+                        let mut files = Vec::new();
+                        if let Ok(mut dir) = tokio::fs::read_dir("Tanks").await {
+                            while let Ok(Some(entry)) = dir.next_entry().await {
+                                if entry.path().is_file()
+                                    && entry.path().extension().map_or(false, |v| v == "json")
+                                {
+                                    let path = entry.path();
+                                    let path = path.as_os_str().to_str().unwrap();
+                                    let mut value = file_names
+                                        .get(path)
+                                        .map_or(Vec::<u8>::new(), |v| v.to_vec());
 
-                                let signature = if value.len() != 0 {
-                                    fast_rsync::Signature::deserialize(&value)?
+                                    let signature = if !value.is_empty() {
+                                        fast_rsync::Signature::deserialize(&value)?
+                                    } else {
+                                        fast_rsync::Signature::calculate(
+                                            &Vec::new(),
+                                            &mut value,
+                                            fast_rsync::SignatureOptions {
+                                                block_size: 64,
+                                                crypto_hash_size: 5,
+                                            },
+                                        )
+                                    };
+
+                                    let content = tokio::fs::read(path).await?;
+                                    let mut patch = Vec::new();
+                                    fast_rsync::diff(&signature.index(), &content, &mut patch)?;
+                                    files.push((path.to_owned(), patch));
+                                }
+                            }
+                        }
+                        let packet = data::Packet::FilesSyncResponse { file_names: files };
+                        packet.serialize(&mut serializer)?;
+                        send.write_all(&buf).await?;
+                    }
+                    data::Packet::PlayerProfileRequest { nickname } => {
+                        let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);
+                        if id.is_none() {
+                            error!("unauthorized access");
+                            return Ok(enum_name);
+                        }
+                        let mut buf = Vec::new();
+                        let mut serializer = Serializer::new(&mut buf);
+                        let player = db::get_player_by_nickname(&nickname);
+                        let player = player.map(|mut f| {
+                            if id.unwrap() != f.id {
+                                (f.coins, f.diamonds, f.daily_items, f.daily_items_time) =
+                                    (0, 0, Vec::new(), data::default_naive_date_time());
+                            }
+                            f
+                        });
+
+                        let packet = data::Packet::PlayerProfileResponse {
+                            profile: player,
+                            nickname,
+                        };
+                        packet.serialize(&mut serializer)?;
+                        send.write_all(&buf).await?;
+                    }
+                    data::Packet::SetNicknameRequest { nickname } => {
+                        let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);
+                        if id.is_none() {
+                            error!("unauthorized access");
+                            return Ok(enum_name);
+                        }
+                        let mut buf = Vec::new();
+                        let mut serializer = Serializer::new(&mut buf);
+                        if NICKNAME_REGEX.get().is_match(&nickname) {
+                            if db::get_player_by_nickname(&nickname).is_none() {
+                                let mut player = db::get_player_by_id(id.unwrap()).unwrap();
+                                if player.nickname.is_none() {
+                                    player.nickname = Some(nickname);
+                                    let packet = data::Packet::SetNicknameResponse { error: None };
+                                    packet.serialize(&mut serializer)?;
+                                    send.write_all(&buf).await?;
+                                    if player.tanks.is_empty() {
+                                        let chest = Chest::generate_random_loot(
+                                            ChestName::STARTER,
+                                            &player,
+                                        );
+                                        chest.add_to_player(&mut player);
+                                        let packet = data::Packet::GetChestResponse { chest };
+                                        let mut buf = Vec::new();
+                                        let mut serializer = Serializer::new(&mut buf);
+                                        packet.serialize(&mut serializer)?;
+                                        let mut uni = conn.open_uni().await?;
+                                        uni.write_all(&buf).await?;
+                                    }
+                                    db::update_player(&player)?;
                                 } else {
-                                    fast_rsync::Signature::calculate(
-                                        &Vec::new(),
-                                        &mut value,
-                                        fast_rsync::SignatureOptions {
-                                            block_size: 64,
-                                            crypto_hash_size: 5,
-                                        },
-                                    )
+                                    let packet = data::Packet::SetNicknameResponse {
+                                        error: Some(
+                                            String::from_str("Nickname has been already set")
+                                                .unwrap(),
+                                        ),
+                                    };
+                                    packet.serialize(&mut serializer)?;
+                                    send.write_all(&buf).await?;
+                                }
+                            } else {
+                                let packet = data::Packet::SetNicknameResponse {
+                                    error: Some(
+                                        String::from_str(
+                                            "Nickname is already registered by another player",
+                                        )
+                                        .unwrap(),
+                                    ),
                                 };
-
-                                let content = tokio::fs::read(path).await?;
-                                let mut patch = Vec::new();
-                                fast_rsync::diff(&signature.index(), &content, &mut patch)?;
-                                files.push((path.to_owned(), patch));
+                                packet.serialize(&mut serializer)?;
+                                send.write_all(&buf).await?;
+                            }
+                        } else {
+                            let packet = data::Packet::SetNicknameResponse {
+                                error: Some(String::from_str("Nickname must start from letter, its length must be in range from 6 to 15 and only contains English letters, digits and underscore").unwrap()) 
+                            };
+                            packet.serialize(&mut serializer)?;
+                            send.write_all(&buf).await?;
+                        }
+                    }
+                    data::Packet::UpgradeTankRequest { id: tank_id } => {
+                        let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);
+                        if id.is_none() {
+                            error!("unauthorized access");
+                            return Ok(enum_name);
+                        }
+                        let mut buf = Vec::new();
+                        let mut serializer = Serializer::new(&mut buf);
+                        let mut player = db::get_player_by_id(id.unwrap()).unwrap();
+                        if let Some(mut tank) = player.tanks.iter_mut().find(|f| f.id == tank_id) {
+                            let bound = 2i32.pow(tank.level as u32 - 1u32) * 50;
+                            if tank.count >= bound {
+                                tank.count -= bound;
+                                tank.level += 1;
+                                let packet =
+                                    data::Packet::UpgradeTankResponse { id: Some(tank_id) };
+                                packet.serialize(&mut serializer)?;
+                                send.write_all(&buf).await?;
+                                db::update_player(&player)?;
+                            } else {
+                                let packet = data::Packet::UpgradeTankResponse { id: None };
+                                packet.serialize(&mut serializer)?;
+                                send.write_all(&buf).await?;
                             }
                         }
                     }
-                    let packet = data::Packet::FilesSyncResponse { file_names: files };
-                    packet.serialize(&mut serializer)?;
-                    send.write_all(&buf).await?;
-                } else {
-                    error!("Wrong data came from {} stream!", send.id().index());
+                    data::Packet::GetDailyItemsRequest => {
+                        let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);
+                        if id.is_none() {
+                            error!("unauthorized access");
+                            return Ok(enum_name);
+                        }
+                        let mut buf = Vec::new();
+                        let mut serializer = Serializer::new(&mut buf);
+                        let mut player = db::get_player_by_id(id.unwrap()).unwrap();
+                        let time = chrono::Utc::now().naive_utc();
+                        if (time - player.daily_items_time).num_seconds() >= TWELVE_HOURS {
+                            player.daily_items_time = time;
+                            player.daily_items = player.get_daily_items();
+                            db::update_player(&player)?;
+                            let packet = data::Packet::GetDailyItemsResponse {
+                                items: player.daily_items,
+                                updated: true,
+                            };
+                            packet.serialize(&mut serializer)?;
+                            send.write_all(&buf).await?;
+                        } else {
+                            let packet = data::Packet::GetDailyItemsResponse {
+                                items: player.daily_items,
+                                updated: false,
+                            };
+                            packet.serialize(&mut serializer)?;
+                            send.write_all(&buf).await?;
+                        }
+                    }
+                    _ => {
+                        error!("Wrong data came from {} stream!", send.id().index());
+                    }
                 }
             }
-            _ => {
-                todo!()
-            }
         }
-        Ok(())
+        Ok(enum_name)
     }
 
     #[inline(always)]

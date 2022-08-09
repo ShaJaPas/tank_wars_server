@@ -4,6 +4,7 @@ extern crate diesel;
 mod data;
 mod db;
 mod network;
+mod physics;
 mod schema;
 
 use std::str::FromStr;
@@ -11,6 +12,7 @@ use std::str::FromStr;
 use argh::FromArgs;
 use color_eyre::eyre::Result;
 use diesel::{Connection, PgConnection};
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use crate::network::Server;
 
@@ -38,7 +40,7 @@ fn main() -> Result<()> {
 
     db::POOL.set(move || PgConnection::establish(&args.db_url).unwrap());
     db::POOL.get();
-    tokio::runtime::Builder::new_multi_thread()
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .on_thread_start(move || {
             db::POOL.get();
@@ -67,9 +69,15 @@ fn main() -> Result<()> {
 
             data::TANKS.set(result?);
 
+            let log = std::fs::File::create("debug.log")?;
             tracing::subscriber::set_global_default(
                 tracing_subscriber::FmtSubscriber::builder()
-                    .with_max_level(tracing::Level::INFO)
+                    .with_max_level(tracing::Level::DEBUG)
+                    .with_writer(log)
+                    .map_writer(move |f| {
+                        f.with_min_level(tracing::Level::DEBUG)
+                            .or_else(|| std::io::stdout())
+                    })
                     .finish(),
             )?;
 

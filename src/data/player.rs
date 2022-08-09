@@ -8,7 +8,9 @@ use super::Tank;
 use super::{DailyItem, TankRarity, WeightedRandomList};
 use crate::schema::players;
 
-#[derive(Serialize, Deserialize, Queryable, Insertable, Debug)]
+#[derive(
+    Serialize, Deserialize, Queryable, Insertable, Debug, AsChangeset, Identifiable, Clone,
+)]
 #[table_name = "players"]
 pub struct Player {
     #[serde(skip)]
@@ -31,13 +33,11 @@ pub struct Player {
 
     pub rank_level: i32,
 
-    #[serde(skip)]
     pub coins: i32,
 
-    #[serde(skip)]
     pub diamonds: i32,
 
-    #[serde(skip, default = "default_naive_date_time")]
+    #[serde(default = "default_naive_date_time")]
     pub daily_items_time: NaiveDateTime,
 
     pub friends_nicks: Vec<String>,
@@ -55,7 +55,7 @@ pub struct Player {
     pub daily_items: Vec<DailyItem>,
 }
 
-fn default_naive_date_time() -> NaiveDateTime {
+pub fn default_naive_date_time() -> NaiveDateTime {
     NaiveDateTime::new(
         NaiveDate::from_ymd(1970, 1, 1),
         NaiveTime::from_hms(0, 0, 0),
@@ -104,34 +104,45 @@ impl Player {
     pub fn get_daily_items(&self) -> Vec<DailyItem> {
         let mut gen = rand::thread_rng();
         let mut result = Vec::with_capacity(4);
-        unsafe {
-            result.set_len(4);
-        }
         let tanks = super::TANKS.get();
-        for (i, rarity) in TankRarity::iter().take(4).enumerate() {
+        for rarity in TankRarity::iter().take(4) {
             let mut list = WeightedRandomList::new();
             for x in tanks.iter().filter(|x| x.characteristics.rarity == rarity) {
                 list.add_entry(x, rarity.value());
             }
             let id = list.get_random().unwrap().id as i32;
             if self.tanks.iter().any(|x| x.id == id) {
-                result[i] = DailyItem {
+                result.push(DailyItem {
                     price: gen.gen_range(40..=50),
                     tank_id: id,
                     count: gen.gen_range(40..=50),
                     bought: false,
-                };
+                });
             } else {
                 let price = 60 * (TankRarity::COMMON.value() / rarity.value()).sqrt() as i32;
-                result[i] = DailyItem {
+                result.push(DailyItem {
                     price: gen.gen_range(price..=(price as f32 * 1.1) as i32),
                     tank_id: id,
                     count: 0,
                     bought: false,
-                };
+                });
             }
         }
 
         result
+    }
+
+    pub fn check_daily_items(&mut self) {
+        let mut gen = rand::thread_rng();
+        for x in self.daily_items.iter_mut() {
+            if !x.bought && self.tanks.iter().any(|f| f.id == x.tank_id) && x.count == 0 {
+                *x = DailyItem {
+                    price: gen.gen_range(40..=50),
+                    tank_id: x.tank_id,
+                    count: gen.gen_range(40..=50),
+                    bought: false,
+                };
+            }
+        }
     }
 }

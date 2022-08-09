@@ -1,23 +1,40 @@
+mod chest;
 mod daily_item;
+mod map;
 mod player;
 mod tank;
 mod tank_info;
 
+use quinn::Connection;
 use rand::Rng;
 use std::collections::HashMap;
+use strum::Display;
+use tokio::sync::mpsc::UnboundedSender;
 
+pub use chest::*;
 pub use daily_item::*;
+pub use map::*;
 pub use player::*;
 pub use tank::*;
 pub use tank_info::*;
 
 use serde::{Deserialize, Serialize};
 
+use crate::physics::PhysicsCommand;
+
 pub static CLIENTS: state::Storage<dashmap::DashMap<usize, Client>> = state::Storage::new();
 
 pub static TANKS: state::Storage<Vec<TankInfo>> = state::Storage::new();
 
-#[derive(Debug, Serialize, Deserialize)]
+pub static NICKNAME_REGEX: state::Storage<regex::Regex> = state::Storage::new();
+
+pub static MATCHMAKER: state::LocalStorage<UnboundedSender<BalancerCommand>> =
+    state::LocalStorage::new();
+
+pub static PHYSICS: state::LocalStorage<UnboundedSender<PhysicsCommand>> =
+    state::LocalStorage::new();
+
+#[derive(Debug, Serialize, Deserialize, Display)]
 pub enum Packet {
     SignInRequest {
         os_id: String,
@@ -25,6 +42,7 @@ pub enum Packet {
     },
     SignInResponse {
         client_id: Option<i64>,
+        profile: Option<Player>,
     },
 
     FilesSyncRequest {
@@ -34,25 +52,114 @@ pub enum Packet {
     FilesSyncResponse {
         file_names: Vec<(String, Vec<u8>)>,
     },
+
+    PlayerProfileRequest {
+        nickname: String,
+    },
+
+    PlayerProfileResponse {
+        profile: Option<Player>,
+        nickname: String,
+    },
+
+    SetNicknameRequest {
+        nickname: String,
+    },
+
+    SetNicknameResponse {
+        error: Option<String>,
+    },
+
+    GetChestRequest {
+        name: ChestName,
+    },
+
+    GetChestResponse {
+        chest: Chest,
+    },
+
+    UpgradeTankRequest {
+        id: i32,
+    },
+
+    UpgradeTankResponse {
+        id: Option<i32>,
+    },
+
+    GetDailyItemsRequest,
+
+    GetDailyItemsResponse {
+        items: Vec<DailyItem>,
+        updated: bool,
+    },
+
+    JoinMatchMakerRequest {
+        id: i32,
+    },
+
+    MapFoundResponse {
+        wait_time: f32,
+        map: Map,
+        opponent_nick: String,
+        opponent_tank: Tank,
+        initial_packet: GamePacket
+    },
+
+    //Without responses
+    LeaveMatchMakerRequest,
 }
 
-#[derive(Default, Debug)]
+
+//This packet server sends to client
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GamePacket {
+    pub time_left: u16,
+    pub my_data: GamePlayerData,
+    pub opponnet_data: GamePlayerData
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GamePlayerData{
+    pub x: f32,
+    pub y: f32,
+    pub body_rotation: f32,
+    pub gun_rotation: f32,
+    pub hp: u16,
+    pub cool_down: f32,
+    pub bullets: Vec<BulletData>
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BulletData {
+    pub x: f32,
+    pub y: f32,
+    pub rotation: f32,
+    pub name: String
+}
+
+#[derive(Debug)]
+pub enum BalancerCommand {
+    AddPlayer {
+        player: Box<Player>,
+        tank_id: i32,
+        conn: Connection,
+    },
+    RemovePlayer(i64),
+}
+
+#[derive(Debug)]
 pub struct Client {
     pub id: i64,
 }
-
-pub const LOGIN_STREAM_ID: u64 = 0;
-pub const DATA_SYNC_STREAM_ID: u64 = 1;
-
 pub struct WeightedRandomList<T>
 where
-    T: Copy,
+    T: Copy + PartialEq,
 {
-    entries: Vec<(T, f32)>,
+    entries: Vec<(T, f32, f32)>,
     acc_weight: f32,
 }
 
-impl<T: Copy> WeightedRandomList<T> {
+impl<T: Copy + PartialEq> WeightedRandomList<T> {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -62,14 +169,27 @@ impl<T: Copy> WeightedRandomList<T> {
 
     pub fn add_entry(&mut self, element: T, weight: f32) {
         self.acc_weight += weight;
-        self.entries.push((element, self.acc_weight));
+        self.entries.push((element, self.acc_weight, weight));
+    }
+
+    pub fn remove_enty(&mut self, element: T) -> Result<f32, String> {
+        let chance = self
+            .entries
+            .iter()
+            .filter(|f| f.0 == element)
+            .last()
+            .ok_or("Zero elements!")?
+            .2;
+        self.acc_weight -= chance;
+        self.entries.retain(|f| f.0 != element);
+        Ok(chance)
     }
 
     pub fn get_random(&self) -> color_eyre::Result<T> {
-        if self.entries.len() == 0 {
+        if self.entries.is_empty() {
             return Err(color_eyre::eyre::eyre!("Length must be greater than 0"));
         }
-        let r: f32 = rand::thread_rng().gen_range(0.0..1.0);
+        let r: f32 = rand::thread_rng().gen_range(0.0..self.acc_weight);
         for entry in &self.entries {
             if entry.1 >= r {
                 return Ok(entry.0);

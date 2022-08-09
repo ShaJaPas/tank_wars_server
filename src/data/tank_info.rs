@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TankInfo {
     pub id: u32,
@@ -9,7 +9,7 @@ pub struct TankInfo {
     pub characteristics: TankCharacteristics,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TankGraphicsInfo {
     pub bullet_name: String,
@@ -25,7 +25,7 @@ pub struct TankGraphicsInfo {
     pub tank_height: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TankCharacteristics {
     pub name: String,
@@ -39,7 +39,7 @@ pub struct TankCharacteristics {
     pub damage: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, EnumIter)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord, EnumIter)]
 pub enum TankRarity {
     COMMON,
     RARE,

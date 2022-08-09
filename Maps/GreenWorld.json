@@ -1,0 +1,100 @@
+{
+    "name": "GreenWorld",
+    "width": 1280,
+    "height": 1920,
+    "player1Y": 1800,
+    "player2Y": 120,
+    "objects": [
+        {
+            "id": 3,
+            "rotation": 0,
+            "scale": 1,
+            "x": 220,
+            "y": 1215
+        },
+        {
+            "id": 4,
+            "rotation": 327,
+            "scale": 1,
+            "x": 106,
+            "y": 1295
+        },
+        {
+            "id": 1,
+            "rotation": 90,
+            "scale": 1,
+            "x": 790,
+            "y": 1037
+        },
+        {
+            "id": 1,
+            "rotation": 90,
+            "scale": 1,
+            "x": 364,
+            "y": 1036
+        },
+        {
+            "id": 1,
+            "rotation": 90,
+            "scale": 1,
+            "x": 367,
+            "y": 781
+        },
+        {
+            "id": 1,
+            "rotation": 90,
+            "scale": 1,
+            "x": 789,
+            "y": 781
+        },
+        {
+            "id": 2,
+            "rotation": 90,
+            "scale": 1,
+            "x": 913,
+            "y": 906
+        },
+        {
+            "id": 2,
+            "rotation": 90,
+            "scale": 1,
+            "x": 238,
+            "y": 905
+        },
+        {
+            "id": 3,
+            "rotation": 0,
+            "scale": 1,
+            "x": 1008,
+            "y": 1112
+        },
+        {
+            "id": 5,
+            "rotation": 20,
+            "scale": 1,
+            "x": 201,
+            "y": 1669
+        },
+        {
+            "id": 6,
+            "rotation": 13,
+            "scale": 1,
+            "x": 944,
+            "y": 1311
+        },
+        {
+            "id": 7,
+            "rotation": 21,
+            "scale": 1,
+            "x": 339,
+            "y": 645
+        },
+        {
+            "id": 8,
+            "rotation": 4,
+            "scale": 1,
+            "x": 635,
+            "y": 1432
+        }
+    ]
+}

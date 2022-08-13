@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc::{error::TryRecvError, unbounded_channel, UnboundedSender};
 
-use crate::data::{Map, Player, Tank, TankInfo, TANKS, GamePacket, Packet, GamePlayerData};
+use crate::data::{
+    GamePacket, GamePlayerData, Map, Packet, Player, PlayerPosition, Tank, TankInfo, TANKS,
+};
 
 type Result<T> = color_eyre::Result<T>;
 
@@ -28,6 +30,7 @@ struct WorldPlayer<'a> {
     player: Box<Player>,
     conn: Connection,
     stats: PlayerInfo,
+    handle: RigidBodyHandle,
 }
 
 #[derive(Default)]
@@ -64,6 +67,7 @@ impl TryFrom<BalancedPlayer> for WorldPlayer<'_> {
             conn: value.2,
             tank,
             stats: PlayerInfo::default(),
+            handle: RigidBodyHandle::invalid(),
         })
     }
 }
@@ -71,6 +75,10 @@ impl TryFrom<BalancedPlayer> for WorldPlayer<'_> {
 pub enum PhysicsCommand {
     CreateMatch {
         players: (BalancedPlayer, BalancedPlayer),
+    },
+    PlayerPacket {
+        id: i64,
+        position: PlayerPosition,
     },
 }
 
@@ -111,7 +119,6 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
     std::thread::spawn(move || {
         let mut battles = Vec::new();
         let mut gen = rand::thread_rng();
-        let mut time_step = Instant::now();
         loop {
             for i in 0..battles.len() + 1 {
                 match recv.try_recv() {
@@ -122,7 +129,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                             if !map.contains_key(&player1.0.id) && !map.contains_key(&player2.0.id)
                             {
                                 if let (
-                                    Ok::<WorldPlayer, _>(player1),
+                                    Ok::<WorldPlayer, _>(mut player1),
                                     Ok::<WorldPlayer, _>(mut player2),
                                 ) = (player1.try_into(), player2.try_into())
                                 {
@@ -155,8 +162,8 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         if map_objects.body_exists(&name) {
                                             let mut position = Isometry::new(
                                                 vector![
-                                                    object.x * SCALE_TO_PHYSICS,
-                                                    object.y * SCALE_TO_PHYSICS
+                                                    (object.x + object_sizes[&object.id].x / 2f32) * SCALE_TO_PHYSICS,
+                                                    (object.y + object_sizes[&object.id].y / 2f32) * SCALE_TO_PHYSICS
                                                 ],
                                                 0.0,
                                             );
@@ -190,7 +197,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                                         .get(&object.id)
                                                         .unwrap()
                                                         .coords
-                                                        .scale(SCALE_TO_PHYSICS),
+                                                        .scale(SCALE_TO_PHYSICS) / 2f32,
                                                     0.0,
                                                 ));
                                         }
@@ -204,17 +211,25 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         0.0,
                                     );
                                     position.append_rotation_wrt_center_mut(&UnitComplex::new(
-                                        90f32.to_radians(),
+                                        0f32.to_radians(),
                                     ));
-                                    let player1_body =
-                                        RigidBodyBuilder::dynamic().position(position).linvel(vector![0.0, player1.tank_info.characteristics.velocity * SCALE_TO_PHYSICS]).build();
-                                        
+                                    let player1_body = RigidBodyBuilder::dynamic()
+                                        .position(position)
+                                        .linvel(vector![
+                                            0.0,
+                                            -player1.tank_info.characteristics.velocity
+                                                * SCALE_TO_PHYSICS
+                                        ])
+                                        .ccd_enabled(true)
+                                        .build();
+
                                     let player1_collider = bodies.create_collider(
                                         &player1.tank.id.to_string(),
                                         player1.tank_info.graphics_info.tank_width as f32
                                             * SCALE_TO_PHYSICS,
                                     );
                                     let player1_body_handle = world.bodies.insert(player1_body);
+                                    player1.handle = player1_body_handle;
                                     let handle = world.colliders.insert_with_parent(
                                         player1_collider,
                                         player1_body_handle,
@@ -243,8 +258,20 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     position.append_rotation_wrt_center_mut(&UnitComplex::new(
                                         180f32.to_radians(),
                                     ));
-                                    let player2_body =
-                                        RigidBodyBuilder::dynamic().position(position).linvel(vector![0.0, player2.tank_info.characteristics.velocity * SCALE_TO_PHYSICS]).build();
+                                    let velocity = vector![
+                                        player2.tank_info.characteristics.velocity
+                                            * SCALE_TO_PHYSICS
+                                            * position.rotation.cos_angle(),
+                                        player2.tank_info.characteristics.velocity
+                                            * SCALE_TO_PHYSICS
+                                            * position.rotation.sin_angle()
+                                    ];
+
+                                    let player2_body = RigidBodyBuilder::dynamic()
+                                        .position(position)
+                                        .linvel(velocity)
+                                        .ccd_enabled(true)
+                                        .build();
 
                                     let player2_collider = bodies.create_collider(
                                         &player2.tank.id.to_string(),
@@ -252,6 +279,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                             * SCALE_TO_PHYSICS,
                                     );
                                     let player2_body_handle = world.bodies.insert(player2_body);
+                                    player2.handle = player2_body_handle;
                                     let handle = world.colliders.insert_with_parent(
                                         player2_collider,
                                         player2_body_handle,
@@ -273,39 +301,37 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     player2.stats.gun_angle = 180f32;
                                     player2.stats.gun_rotation = 180f32;
 
-                                    /*let mut buf = Vec::new();
-                                    let mut serializer = rmp_serde::Serializer::new(&mut buf);
-                                    world.serialize(&mut serializer).unwrap();
-                                    std::fs::write(
-                                        "/home/konstantin/Desktop/rapier_test/world.physics",
-                                        buf,
-                                    )
-                                    .unwrap();*/
+                                    player1.stats.hp = (player1.tank_info.characteristics.hp as f32
+                                        * (1f32 + (player1.tank.level - 1) as f32 / 10f32))
+                                        as i32;
+                                    player2.stats.hp = (player2.tank_info.characteristics.hp as f32
+                                        * (1f32 + (player2.tank.level - 1) as f32 / 10f32))
+                                        as i32;
 
                                     //notify players
                                     //player1
                                     let game_packet = GamePacket {
                                         time_left: (MAX_BATTLE_TIME + WAIT_TIME) as u16,
-                                        my_data: GamePlayerData{
+                                        my_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
-                                            y: (battle_map.player1_y / 2) as f32,
-                                            body_rotation: 0f32,
+                                            y: battle_map.player1_y as f32,
+                                            body_rotation: world.bodies.get(player1_body_handle).unwrap().rotation().angle().to_degrees(),
                                             gun_rotation: 0f32,
-                                            hp: player1.tank_info.characteristics.hp as u16,
+                                            hp: player1.stats.hp as u16,
                                             cool_down: player1.tank_info.characteristics.reloading,
                                             bullets: Vec::new(),
                                         },
-                                        opponnet_data: GamePlayerData{
+                                        opponent_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
-                                            y: (battle_map.player2_y / 2) as f32,
-                                            body_rotation: 180f32,
+                                            y: battle_map.player2_y as f32,
+                                            body_rotation: world.bodies.get(player2_body_handle).unwrap().rotation().angle().to_degrees(),
                                             gun_rotation: 180f32,
-                                            hp: player2.tank_info.characteristics.hp as u16,
+                                            hp: player2.stats.hp as u16,
                                             cool_down: player2.tank_info.characteristics.reloading,
                                             bullets: Vec::new(),
                                         },
                                     };
-                                    let data = Packet::MapFoundResponse{
+                                    let data = Packet::MapFoundResponse {
                                         wait_time: WAIT_TIME,
                                         map: battle_map.clone(),
                                         opponent_nick: player2.player.nickname.clone().unwrap(),
@@ -315,36 +341,37 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     let mut buf = Vec::new();
                                     let mut serializer = Serializer::new(&mut buf);
                                     data.serialize(&mut serializer).unwrap();
-                                    futures::executor::block_on(async{
+                                    futures::executor::block_on(async {
                                         let mut uni = player1.conn.open_uni().await?;
                                         uni.write_all(&buf).await?;
                                         uni.finish().await?;
                                         Result::<()>::Ok(())
-                                    }).unwrap();
+                                    })
+                                    .unwrap();
 
                                     //player2
                                     let game_packet = GamePacket {
                                         time_left: (MAX_BATTLE_TIME + WAIT_TIME) as u16,
-                                        opponnet_data: GamePlayerData{
+                                        opponent_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
-                                            y: (battle_map.player1_y / 2) as f32,
-                                            body_rotation: 0f32,
+                                            y: battle_map.player1_y as f32,
+                                            body_rotation: world.bodies.get(player1_body_handle).unwrap().rotation().angle().to_degrees(),
                                             gun_rotation: 0f32,
-                                            hp: player1.tank_info.characteristics.hp as u16,
+                                            hp: player1.stats.hp as u16,
                                             cool_down: player1.tank_info.characteristics.reloading,
                                             bullets: Vec::new(),
                                         },
-                                        my_data: GamePlayerData{
+                                        my_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
-                                            y: (battle_map.player2_y / 2) as f32,
-                                            body_rotation: 180f32,
+                                            y: battle_map.player2_y as f32,
+                                            body_rotation: world.bodies.get(player2_body_handle).unwrap().rotation().angle().to_degrees(),
                                             gun_rotation: 180f32,
-                                            hp: player2.tank_info.characteristics.hp as u16,
+                                            hp: player2.stats.hp as u16,
                                             cool_down: player2.tank_info.characteristics.reloading,
                                             bullets: Vec::new(),
                                         },
                                     };
-                                    let data = Packet::MapFoundResponse{
+                                    let data = Packet::MapFoundResponse {
                                         wait_time: WAIT_TIME,
                                         map: battle_map.clone(),
                                         opponent_nick: player1.player.nickname.clone().unwrap(),
@@ -354,17 +381,19 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     let mut buf = Vec::new();
                                     let mut serializer = Serializer::new(&mut buf);
                                     data.serialize(&mut serializer).unwrap();
-                                    futures::executor::block_on(async{
+                                    futures::executor::block_on(async {
                                         let mut uni = player2.conn.open_uni().await?;
                                         uni.write_all(&buf).await?;
                                         uni.finish().await?;
                                         Result::<()>::Ok(())
-                                    }).unwrap();
-                                    
+                                    })
+                                    .unwrap();
+
                                     let battle = Battle {
                                         world,
                                         players: (player1, player2),
-                                        battle_time: 0f32,
+                                        step: Instant::now(),
+                                        time: 0f32,
                                     };
 
                                     if let Some(x) = free_indexes.pop() {
@@ -379,6 +408,34 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                 }
                             }
                         }
+                        PhysicsCommand::PlayerPacket { id, position } => {
+                            if let Some(&index) = map.get(&id) {
+                                let battle = &mut battles[index];
+                                let player = if id == battle.players.0.player.id {
+                                    &battle.players.0
+                                } else {
+                                    &battle.players.1
+                                };
+                                let player_body =
+                                    battle.world.bodies.get_mut(player.handle).unwrap();
+                            
+                                player_body.set_angvel(0f32, true);
+                                if position.moving {
+                                    let velocity = vector![
+                                        player.tank_info.characteristics.velocity
+                                            * SCALE_TO_PHYSICS
+                                            * position.body_rotation.cos(),
+                                        player.tank_info.characteristics.velocity
+                                            * SCALE_TO_PHYSICS
+                                            * position.body_rotation.sin()
+                                    ];
+                                    player_body.set_linvel(velocity, true);
+                                    player_body.set_rotation(position.body_rotation, true)
+                                } else {
+                                    player_body.set_linvel(Vector::zeros(), true);
+                                }
+                            }
+                        }
                     },
                     Err(e) => {
                         if e == TryRecvError::Disconnected {
@@ -389,14 +446,86 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                 if i == battles.len() {
                     continue;
                 }
-                let step = time_step.elapsed().as_secs_f32();
-                if  step >= UPDATE_TIME {
-                    battles[i].battle_time += step;
-                    if battles[i].battle_time >= WAIT_TIME {
-                        battles[i].physics_step();
+                let step = battles[i].step.elapsed().as_secs_f32();
+                if step >= UPDATE_TIME {
+                    battles[i].step = Instant::now();
+                    battles[i].time += step;
+                    battles[i].world.integration_parameters.dt = step;
+                    battles[i].physics_step();
+                    //notify players
+                    //player1
+                    let my_pos = battles[i]
+                        .world
+                        .bodies
+                        .get(battles[i].players.0.handle)
+                        .unwrap()
+                        .position();
+                    let op_pos = battles[i]
+                        .world
+                        .bodies
+                        .get(battles[i].players.1.handle)
+                        .unwrap()
+                        .position();
+                    let game_packet = GamePacket {
+                        time_left: battles[i].time as u16,
+                        my_data: GamePlayerData {
+                            x: my_pos.translation.x * SCALE_TO_PIXELS,
+                            y: my_pos.translation.y * SCALE_TO_PIXELS,
+                            body_rotation: my_pos.rotation.angle().to_degrees(),
+                            gun_rotation: 0f32,
+                            hp: battles[i].players.0.stats.hp as u16,
+                            cool_down: 0f32,
+                            bullets: Vec::new(),
+                        },
+                        opponent_data: GamePlayerData {
+                            x: op_pos.translation.x * SCALE_TO_PIXELS,
+                            y: op_pos.translation.y * SCALE_TO_PIXELS,
+                            body_rotation: op_pos.rotation.angle().to_degrees(),
+                            gun_rotation: 180f32,
+                            hp: battles[i].players.1.stats.hp as u16,
+                            cool_down: 0f32,
+                            bullets: Vec::new(),
+                        },
+                    };
+                    let mut buf = Vec::new();
+                    let mut serializer = Serializer::new(&mut buf);
+                    game_packet.serialize(&mut serializer).unwrap();
+                    battles[i]
+                        .players
+                        .0
+                        .conn
+                        .send_datagram(bytes::Bytes::copy_from_slice(&buf));
 
-                    }
-                    time_step = Instant::now();
+                    //player2
+                    let game_packet = GamePacket {
+                        time_left: battles[i].time as u16,
+                        opponent_data: GamePlayerData {
+                            x: my_pos.translation.x * SCALE_TO_PIXELS,
+                            y: my_pos.translation.y * SCALE_TO_PIXELS,
+                            body_rotation: my_pos.rotation.angle().to_degrees(),
+                            gun_rotation: 0f32,
+                            hp: battles[i].players.0.stats.hp as u16,
+                            cool_down: 0f32,
+                            bullets: Vec::new(),
+                        },
+                        my_data: GamePlayerData {
+                            x: op_pos.translation.x * SCALE_TO_PIXELS,
+                            y: op_pos.translation.y * SCALE_TO_PIXELS,
+                            body_rotation: op_pos.rotation.angle().to_degrees(),
+                            gun_rotation: 180f32,
+                            hp: battles[i].players.1.stats.hp as u16,
+                            cool_down: 0f32,
+                            bullets: Vec::new(),
+                        },
+                    };
+                    let mut buf = Vec::new();
+                    let mut serializer = Serializer::new(&mut buf);
+                    game_packet.serialize(&mut serializer).unwrap();
+                    battles[i]
+                        .players
+                        .1
+                        .conn
+                        .send_datagram(bytes::Bytes::copy_from_slice(&buf));
                 }
             }
         }
@@ -462,7 +591,8 @@ fn empty_hook() -> Box<()> {
 struct Battle<'a> {
     world: PhysicsWorld,
     players: (WorldPlayer<'a>, WorldPlayer<'a>),
-    battle_time: f32,
+    step: Instant,
+    time: f32,
 }
 
 impl Battle<'_> {

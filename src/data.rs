@@ -102,31 +102,38 @@ pub enum Packet {
         map: Map,
         opponent_nick: String,
         opponent_tank: Tank,
-        initial_packet: GamePacket
+        initial_packet: GamePacket,
     },
 
     //Without responses
     LeaveMatchMakerRequest,
 }
 
-
 //This packet server sends to client
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GamePacket {
     pub time_left: u16,
     pub my_data: GamePlayerData,
-    pub opponnet_data: GamePlayerData
+    pub opponent_data: GamePlayerData,
+}
+
+//This packet client sends to server
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlayerPosition {
+    pub body_rotation: f32,
+    pub gun_rotation: f32,
+    pub moving: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GamePlayerData{
+pub struct GamePlayerData {
     pub x: f32,
     pub y: f32,
     pub body_rotation: f32,
     pub gun_rotation: f32,
     pub hp: u16,
     pub cool_down: f32,
-    pub bullets: Vec<BulletData>
+    pub bullets: Vec<BulletData>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,7 +141,7 @@ pub struct BulletData {
     pub x: f32,
     pub y: f32,
     pub rotation: f32,
-    pub name: String
+    pub name: String,
 }
 
 #[derive(Debug)]
@@ -155,21 +162,21 @@ pub struct WeightedRandomList<T>
 where
     T: Copy + PartialEq,
 {
-    entries: Vec<(T, f32, f32)>,
-    acc_weight: f32,
+    entries: Vec<(T, f32)>,
+    acc_weight: f32
 }
 
 impl<T: Copy + PartialEq> WeightedRandomList<T> {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
-            acc_weight: 0f32,
+            acc_weight: 0f32
         }
     }
 
     pub fn add_entry(&mut self, element: T, weight: f32) {
         self.acc_weight += weight;
-        self.entries.push((element, self.acc_weight, weight));
+        self.entries.push((element, weight));
     }
 
     pub fn remove_enty(&mut self, element: T) -> Result<f32, String> {
@@ -179,7 +186,7 @@ impl<T: Copy + PartialEq> WeightedRandomList<T> {
             .filter(|f| f.0 == element)
             .last()
             .ok_or("Zero elements!")?
-            .2;
+            .1;
         self.acc_weight -= chance;
         self.entries.retain(|f| f.0 != element);
         Ok(chance)
@@ -189,9 +196,11 @@ impl<T: Copy + PartialEq> WeightedRandomList<T> {
         if self.entries.is_empty() {
             return Err(color_eyre::eyre::eyre!("Length must be greater than 0"));
         }
+        let mut sum = 0f32;
         let r: f32 = rand::thread_rng().gen_range(0.0..self.acc_weight);
         for entry in &self.entries {
-            if entry.1 >= r {
+            sum += entry.1;
+            if sum >= r {
                 return Ok(entry.0);
             }
         }

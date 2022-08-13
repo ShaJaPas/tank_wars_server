@@ -1,10 +1,10 @@
 use crate::{
     data::{
-        self, BalancerCommand, Chest, ChestName, Client, Player, CLIENTS, MATCHMAKER,
-        NICKNAME_REGEX, PHYSICS,
+        self, BalancerCommand, Chest, ChestName, Client, Player, PlayerPosition, CLIENTS,
+        MATCHMAKER, NICKNAME_REGEX, PHYSICS,
     },
     db,
-    physics::{self, BalancedPlayer},
+    physics::{self, BalancedPlayer, PhysicsCommand},
 };
 
 use std::{io::Cursor, str::FromStr, sync::Arc};
@@ -239,7 +239,7 @@ impl Server {
                     },
 
                     Some(stream) = conn.datagrams.next() => {
-                        let _bytes = match stream {
+                        let buf = match stream {
                             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                                 info!("connection closed by peer");
                                 assert!(CLIENTS.get().remove(&conn.connection.stable_id()).is_some());
@@ -250,6 +250,13 @@ impl Server {
                             }
                             Ok(s) => s,
                         };
+
+                        if let Ok(packet) = PlayerPosition::deserialize(&mut Deserializer::new(buf.as_ref())){
+                            if let Some(client) = CLIENTS.get().get(&conn.connection.stable_id()){
+                                let cmd = PhysicsCommand::PlayerPacket {id: client.id, position: packet};
+                                PHYSICS.get().send(cmd).unwrap();
+                            }
+                        }
 
                     },
 

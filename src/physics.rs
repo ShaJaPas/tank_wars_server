@@ -39,11 +39,10 @@ struct PlayerInfo {
     damage_taken: i32,
     shots: i32,
     succeeded_shots: i32,
-    gun_rotation: f32,
     hp: i32,
     damage: i32,
+    gun_rotation: f32,
     gun_angle: f32,
-    body_angle: f32,
 }
 
 impl TryFrom<BalancedPlayer> for WorldPlayer<'_> {
@@ -71,6 +70,7 @@ impl TryFrom<BalancedPlayer> for WorldPlayer<'_> {
         })
     }
 }
+
 #[derive(Debug)]
 pub enum PhysicsCommand {
     CreateMatch {
@@ -162,8 +162,10 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         if map_objects.body_exists(&name) {
                                             let mut position = Isometry::new(
                                                 vector![
-                                                    (object.x + object_sizes[&object.id].x / 2f32) * SCALE_TO_PHYSICS,
-                                                    (object.y + object_sizes[&object.id].y / 2f32) * SCALE_TO_PHYSICS
+                                                    (object.x + object_sizes[&object.id].x / 2f32)
+                                                        * SCALE_TO_PHYSICS,
+                                                    (object.y + object_sizes[&object.id].y / 2f32)
+                                                        * SCALE_TO_PHYSICS
                                                 ],
                                                 0.0,
                                             );
@@ -197,7 +199,8 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                                         .get(&object.id)
                                                         .unwrap()
                                                         .coords
-                                                        .scale(SCALE_TO_PHYSICS) / 2f32,
+                                                        .scale(SCALE_TO_PHYSICS)
+                                                        / 2f32,
                                                     0.0,
                                                 ));
                                         }
@@ -297,9 +300,6 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                                 * SCALE_TO_PHYSICS,
                                             0.0,
                                         ));
-                                    player2.stats.body_angle = 180f32;
-                                    player2.stats.gun_angle = 180f32;
-                                    player2.stats.gun_rotation = 180f32;
 
                                     player1.stats.hp = (player1.tank_info.characteristics.hp as f32
                                         * (1f32 + (player1.tank.level - 1) as f32 / 10f32))
@@ -315,7 +315,13 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         my_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
                                             y: battle_map.player1_y as f32,
-                                            body_rotation: world.bodies.get(player1_body_handle).unwrap().rotation().angle().to_degrees(),
+                                            body_rotation: world
+                                                .bodies
+                                                .get(player1_body_handle)
+                                                .unwrap()
+                                                .rotation()
+                                                .angle()
+                                                .to_degrees(),
                                             gun_rotation: 0f32,
                                             hp: player1.stats.hp as u16,
                                             cool_down: player1.tank_info.characteristics.reloading,
@@ -324,7 +330,13 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         opponent_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
                                             y: battle_map.player2_y as f32,
-                                            body_rotation: world.bodies.get(player2_body_handle).unwrap().rotation().angle().to_degrees(),
+                                            body_rotation: world
+                                                .bodies
+                                                .get(player2_body_handle)
+                                                .unwrap()
+                                                .rotation()
+                                                .angle()
+                                                .to_degrees(),
                                             gun_rotation: 180f32,
                                             hp: player2.stats.hp as u16,
                                             cool_down: player2.tank_info.characteristics.reloading,
@@ -355,7 +367,13 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         opponent_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
                                             y: battle_map.player1_y as f32,
-                                            body_rotation: world.bodies.get(player1_body_handle).unwrap().rotation().angle().to_degrees(),
+                                            body_rotation: world
+                                                .bodies
+                                                .get(player1_body_handle)
+                                                .unwrap()
+                                                .rotation()
+                                                .angle()
+                                                .to_degrees(),
                                             gun_rotation: 0f32,
                                             hp: player1.stats.hp as u16,
                                             cool_down: player1.tank_info.characteristics.reloading,
@@ -364,7 +382,13 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         my_data: GamePlayerData {
                                             x: (battle_map.width / 2) as f32,
                                             y: battle_map.player2_y as f32,
-                                            body_rotation: world.bodies.get(player2_body_handle).unwrap().rotation().angle().to_degrees(),
+                                            body_rotation: world
+                                                .bodies
+                                                .get(player2_body_handle)
+                                                .unwrap()
+                                                .rotation()
+                                                .angle()
+                                                .to_degrees(),
                                             gun_rotation: 180f32,
                                             hp: player2.stats.hp as u16,
                                             cool_down: player2.tank_info.characteristics.reloading,
@@ -412,28 +436,96 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                             if let Some(&index) = map.get(&id) {
                                 let battle = &mut battles[index];
                                 let player = if id == battle.players.0.player.id {
-                                    &battle.players.0
+                                    &mut battle.players.0
                                 } else {
-                                    &battle.players.1
+                                    &mut battle.players.1
                                 };
+
+                                /*let mut buf = Vec::new();
+                                let mut serializer = Serializer::new(&mut buf);
+                                battle.world.serialize(&mut serializer);
+                                std::fs::write("/home/konstantin/Desktop/rapier_test/world.physics", buf);*/
+
+                                //Body rotation
                                 let player_body =
                                     battle.world.bodies.get_mut(player.handle).unwrap();
-                            
+                                let back_angle = revert_angle_by_y(player_body.rotation().angle());
+
+                                let mut diff = 0f32;
+                                if position.body_rotation != 0f32 {
+                                    diff = position.body_rotation - player_body.rotation().angle();
+                                    diff =
+                                        diff.rem_euclid(360f32.to_radians()) - 180f32.to_radians();
+                                }
+                                let mut back_diff = 0f32;
+                                if position.body_rotation != 0f32 {
+                                    back_diff = position.body_rotation - back_angle;
+                                    back_diff = back_diff.rem_euclid(360f32.to_radians())
+                                        - 180f32.to_radians();
+                                }
+                                let ang_vel = player
+                                    .tank_info
+                                    .characteristics
+                                    .body_rotate_degrees
+                                    .to_radians();
+
                                 player_body.set_angvel(0f32, true);
+                                if position.body_rotation != 0f32 {
+                                    if diff.abs() < back_diff.abs() {
+                                        let alpha = player_body.rotation().angle();
+                                        let direction =
+                                            direction_by_2_angles(alpha, position.body_rotation);
+                                        if diff.abs() <= ang_vel * UPDATE_TIME {
+                                            player_body.set_angvel(0f32, true);
+                                        } else {
+                                            player_body.set_angvel(direction * ang_vel, true);
+                                        }
+                                    } else {
+                                        let direction = direction_by_2_angles(
+                                            back_angle,
+                                            position.body_rotation,
+                                        );
+                                        if back_diff.abs() <= ang_vel * UPDATE_TIME {
+                                            player_body.set_angvel(0f32, true);
+                                        } else {
+                                            player_body.set_angvel(direction * ang_vel, true);
+                                        }
+                                    }
+                                }
                                 if position.moving {
-                                    let velocity = vector![
-                                        player.tank_info.characteristics.velocity
-                                            * SCALE_TO_PHYSICS
-                                            * position.body_rotation.cos(),
-                                        player.tank_info.characteristics.velocity
-                                            * SCALE_TO_PHYSICS
-                                            * position.body_rotation.sin()
-                                    ];
-                                    player_body.set_linvel(velocity, true);
-                                    player_body.set_rotation(position.body_rotation, true)
+                                    if diff.abs() > back_diff.abs() {
+                                        let velocity = vector![
+                                            player.tank_info.characteristics.velocity
+                                                * SCALE_TO_PHYSICS
+                                                * (player_body.rotation().angle()
+                                                    - 90f32.to_radians())
+                                                .cos(),
+                                            player.tank_info.characteristics.velocity
+                                                * SCALE_TO_PHYSICS
+                                                * (player_body.rotation().angle()
+                                                    - 90f32.to_radians())
+                                                .sin()
+                                        ];
+                                        player_body.set_linvel(velocity, true);
+                                    } else {
+                                        let velocity = vector![
+                                            player.tank_info.characteristics.velocity
+                                                * 0.5f32
+                                                * SCALE_TO_PHYSICS
+                                                * (back_angle - 90f32.to_radians()).cos(),
+                                            player.tank_info.characteristics.velocity
+                                                * 0.5f32
+                                                * SCALE_TO_PHYSICS
+                                                * (back_angle - 90f32.to_radians()).sin()
+                                        ];
+                                        player_body.set_linvel(velocity, true);
+                                    }
                                 } else {
                                     player_body.set_linvel(Vector::zeros(), true);
                                 }
+
+                                //Gun rotation
+                                player.stats.gun_rotation = position.gun_rotation;
                             }
                         }
                     },
@@ -454,25 +546,85 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                     battles[i].physics_step();
                     //notify players
                     //player1
+                    let mut diff = 0f32;
+                    let gun_angle = battles[i].players.0.stats.gun_angle
+                        + battles[i]
+                            .world
+                            .bodies
+                            .get(battles[i].players.0.handle)
+                            .unwrap()
+                            .rotation()
+                            .angle();
+                    if battles[i].players.0.stats.gun_rotation != 0f32 {
+                        diff = battles[i].players.0.stats.gun_rotation - gun_angle;
+                        diff += 180f32.to_radians();
+                        diff = diff.rem_euclid(360f32.to_radians()) - 180f32.to_radians();
+                    }
+                    let ang_vel = battles[i]
+                        .players
+                        .0
+                        .tank_info
+                        .characteristics
+                        .gun_rotate_degrees
+                        .to_radians();
+
+                    if battles[i].players.0.stats.gun_rotation != 0f32 {
+                        let direction = diff.signum();
+                        if diff.abs() >= ang_vel * step {
+                            battles[i].players.0.stats.gun_angle += direction * ang_vel * step;
+                        }
+                    }
+
+                    let mut diff = 0f32;
+                    let gun_angle = battles[i].players.1.stats.gun_angle
+                        + battles[i]
+                            .world
+                            .bodies
+                            .get(battles[i].players.1.handle)
+                            .unwrap()
+                            .rotation()
+                            .angle();
+                    if battles[i].players.1.stats.gun_rotation != 0f32 {
+                        diff = battles[i].players.1.stats.gun_rotation - gun_angle;
+                        diff += 180f32.to_radians();
+                        diff = diff.rem_euclid(360f32.to_radians()) - 180f32.to_radians();
+                    }
+                    let ang_vel = battles[i]
+                        .players
+                        .1
+                        .tank_info
+                        .characteristics
+                        .gun_rotate_degrees
+                        .to_radians();
+
+                    if battles[i].players.1.stats.gun_rotation != 0f32 {
+                        let direction = diff.signum();
+                        if diff.abs() >= ang_vel * step {
+                            battles[i].players.1.stats.gun_angle += direction * ang_vel * step;
+                        }
+                    }
+
                     let my_pos = battles[i]
                         .world
                         .bodies
                         .get(battles[i].players.0.handle)
                         .unwrap()
-                        .position();
+                        .position()
+                        .clone();
                     let op_pos = battles[i]
                         .world
                         .bodies
                         .get(battles[i].players.1.handle)
                         .unwrap()
-                        .position();
+                        .position()
+                        .clone();
                     let game_packet = GamePacket {
                         time_left: battles[i].time as u16,
                         my_data: GamePlayerData {
                             x: my_pos.translation.x * SCALE_TO_PIXELS,
                             y: my_pos.translation.y * SCALE_TO_PIXELS,
                             body_rotation: my_pos.rotation.angle().to_degrees(),
-                            gun_rotation: 0f32,
+                            gun_rotation: battles[i].players.0.stats.gun_angle.to_degrees(),
                             hp: battles[i].players.0.stats.hp as u16,
                             cool_down: 0f32,
                             bullets: Vec::new(),
@@ -481,7 +633,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                             x: op_pos.translation.x * SCALE_TO_PIXELS,
                             y: op_pos.translation.y * SCALE_TO_PIXELS,
                             body_rotation: op_pos.rotation.angle().to_degrees(),
-                            gun_rotation: 180f32,
+                            gun_rotation: battles[i].players.1.stats.gun_angle.to_degrees(),
                             hp: battles[i].players.1.stats.hp as u16,
                             cool_down: 0f32,
                             bullets: Vec::new(),
@@ -503,7 +655,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                             x: my_pos.translation.x * SCALE_TO_PIXELS,
                             y: my_pos.translation.y * SCALE_TO_PIXELS,
                             body_rotation: my_pos.rotation.angle().to_degrees(),
-                            gun_rotation: 0f32,
+                            gun_rotation: battles[i].players.0.stats.gun_angle.to_degrees(),
                             hp: battles[i].players.0.stats.hp as u16,
                             cool_down: 0f32,
                             bullets: Vec::new(),
@@ -512,7 +664,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                             x: op_pos.translation.x * SCALE_TO_PIXELS,
                             y: op_pos.translation.y * SCALE_TO_PIXELS,
                             body_rotation: op_pos.rotation.angle().to_degrees(),
-                            gun_rotation: 180f32,
+                            gun_rotation: battles[i].players.1.stats.gun_angle.to_degrees(),
                             hp: battles[i].players.1.stats.hp as u16,
                             cool_down: 0f32,
                             bullets: Vec::new(),
@@ -531,6 +683,28 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
         }
     });
     send
+}
+
+fn direction_by_2_angles(alpha: f32, mut beta: f32) -> f32 {
+    let delta = 360f32.to_radians() - alpha;
+    beta = beta + delta;
+    beta = beta.rem_euclid(360f32.to_radians());
+    if beta < 180f32.to_radians() {
+        -1f32
+    } else {
+        1f32
+    }
+}
+
+fn revert_angle_by_y(alpha: f32) -> f32 {
+    if alpha == 0f32 || alpha == 180f32.to_radians() {
+        return alpha;
+    }
+    if alpha > 0f32 {
+        alpha - 180f32.to_radians()
+    } else {
+        alpha + 180f32.to_radians()
+    }
 }
 
 fn attach_box(bodies: &mut RigidBodySet, colliders: &mut ColliderSet, width: f32, height: f32) {

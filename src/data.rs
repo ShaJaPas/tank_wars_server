@@ -163,14 +163,14 @@ where
     T: Copy + PartialEq,
 {
     entries: Vec<(T, f32)>,
-    acc_weight: f32
+    acc_weight: f32,
 }
 
 impl<T: Copy + PartialEq> WeightedRandomList<T> {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
-            acc_weight: 0f32
+            acc_weight: 0f32,
         }
     }
 

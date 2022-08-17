@@ -7,7 +7,7 @@ edition = "2021"
 argh = "0.1.8"
 
 tokio = { version = "1.20.1", features = ["macros", "rt-multi-thread", "fs", "sync"] }
-futures = { default-features = false, version = "0.3.21", features = ["executor"] }
+futures = { default-features = false, version = "0.3.23", features = ["executor"] }
 
 tracing = "0.1.36"
 tracing-subscriber = "0.3.15"
@@ -45,6 +45,9 @@ strum = { version = "0.24.1", features = ["derive"] }
 
 rapier2d = { version = "0.14.0", features = ["simd-stable", "serde-serialize"] }
 bytes = "1.2.1"
+
+[profile.dev.package.rapier2d]
+opt-level = 3
 
 [profile.release]
 strip = true

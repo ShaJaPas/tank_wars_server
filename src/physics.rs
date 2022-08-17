@@ -43,6 +43,7 @@ struct PlayerInfo {
     damage: i32,
     gun_rotation: f32,
     gun_angle: f32,
+    cool_down: f32,
 }
 
 impl TryFrom<BalancedPlayer> for WorldPlayer<'_> {
@@ -80,6 +81,9 @@ pub enum PhysicsCommand {
         id: i64,
         position: PlayerPosition,
     },
+    PlayerShoot {
+        id: i64,
+    },
 }
 
 enum ObjectConstants {
@@ -93,6 +97,99 @@ enum ObjectConstants {
     SmallBush = 8,
 }
 
+#[repr(u64)]
+#[derive(PartialEq, Debug, strum::FromRepr, Default, Clone, Copy)]
+enum BodyType {
+    Bullet,
+    Tank,
+    #[default]
+    Other,
+}
+
+#[derive(PartialEq, Default, Debug, Clone, Copy)]
+struct UserData {
+    body_type: BodyType,
+    id: i64,
+}
+
+impl UserData {
+    fn new(body_type: BodyType, id: i64) -> Self {
+        Self { body_type, id }
+    }
+}
+impl From<u128> for UserData {
+    fn from(value: u128) -> Self {
+        let lo = (value & 0xffff_ffff_ffff_ffff) as u64;
+        let hi = (value >> 64) as u64;
+        Self {
+            body_type: BodyType::from_repr(lo).unwrap_or_default(),
+            id: hi as i64,
+        }
+    }
+}
+
+impl From<UserData> for u128 {
+    fn from(value: UserData) -> Self {
+        let lo = value.body_type as u64;
+        let hi = value.id as u64;
+        (hi as u128) << 64 | lo as u128
+    }
+}
+
+struct CustomPhysicsHooks;
+
+impl PhysicsHooks for CustomPhysicsHooks {
+    fn filter_contact_pair(&self, context: &PairFilterContext) -> Option<SolverFlags> {
+        let user_data1: UserData = context.bodies[context.rigid_body1.unwrap()].user_data.into();
+        let user_data2: UserData = context.bodies[context.rigid_body2.unwrap()].user_data.into();
+        if user_data1.id == user_data2.id
+            && ((user_data1.body_type == BodyType::Bullet
+                && user_data2.body_type == BodyType::Tank)
+                || (user_data1.body_type == BodyType::Tank
+                    && user_data2.body_type == BodyType::Bullet))
+        {
+            println!("none");
+            return None;
+        }
+        Some(SolverFlags::COMPUTE_IMPULSES)
+    }
+
+    fn filter_intersection_pair(&self, context: &PairFilterContext) -> bool {
+        let user_data1: UserData = context.bodies[context.rigid_body1.unwrap()].user_data.into();
+        let user_data2: UserData = context.bodies[context.rigid_body2.unwrap()].user_data.into();
+        !(user_data1.id == user_data2.id
+            && ((user_data1.body_type == BodyType::Bullet
+                && user_data2.body_type == BodyType::Tank)
+                || (user_data1.body_type == BodyType::Tank
+                    && user_data2.body_type == BodyType::Bullet)))
+    }
+}
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_user_data_with_negative() {
+        let data = UserData {
+            body_type: BodyType::Other,
+            id: i64::MIN,
+        };
+        let number: u128 = data.into();
+        let converted_data: UserData = number.into();
+        assert_eq!(data, converted_data);
+    }
+
+    #[test]
+    fn test_from_user_data_with_positive() {
+        let data = UserData {
+            body_type: BodyType::Tank,
+            id: i64::MAX,
+        };
+        let number: u128 = data.into();
+        let converted_data: UserData = number.into();
+        assert_eq!(data, converted_data);
+    }
+}
+
 pub fn start() -> UnboundedSender<PhysicsCommand> {
     let mut object_sizes = HashMap::new();
     object_sizes.insert(ObjectConstants::RedBarrage as i32, point![96.0, 32.0]);
@@ -103,6 +200,21 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
     object_sizes.insert(ObjectConstants::WoodenHedgehog as i32, point![56.0, 56.0]);
     object_sizes.insert(ObjectConstants::LargeBush as i32, point![128.0, 128.0]);
     object_sizes.insert(ObjectConstants::SmallBush as i32, point![72.0, 72.0]);
+
+    let mut bullet_sizes = HashMap::new();
+    bullet_sizes.insert("1 (4)", vector![16.0, 28.0]);
+    bullet_sizes.insert("4", vector![16.0, 52.0]);
+    bullet_sizes.insert("2 (2)", vector![16.0, 36.0]);
+    bullet_sizes.insert("2 (3)", vector![13.0, 29.0]);
+    bullet_sizes.insert("3", vector![24.0, 32.0]);
+
+    let mut gun_sizes = HashMap::new();
+    gun_sizes.insert("1 (4)", vector![24.0, 60.0]);
+    gun_sizes.insert("5", vector![28.0, 72.0]);
+    gun_sizes.insert("2 (2)", vector![24.0, 60.0]);
+    gun_sizes.insert("4", vector![28.0, 64.0]);
+    gun_sizes.insert("3", vector![32.0, 60.0]);
+    gun_sizes.insert("9", vector![36.0, 80.0]);
 
     let maps = load_maps("Maps").unwrap();
     let mut data = std::fs::read_to_string("Maps/MapObjects/MapObjects.polygons").unwrap();
@@ -145,7 +257,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         impulse_joints: ImpulseJointSet::new(),
                                         multibody_joints: MultibodyJointSet::new(),
                                         ccd_solver: CCDSolver::new(),
-                                        hooks: Box::new(()),
+                                        hooks: Box::new(CustomPhysicsHooks),
                                         events: Box::new(()),
                                     };
                                     //add physics objects
@@ -174,6 +286,9 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                             );
 
                                             let rigid_body = RigidBodyBuilder::fixed()
+                                                .user_data(
+                                                    UserData::new(BodyType::Other, 0i64).into(),
+                                                )
                                                 .position(position)
                                                 .build();
 
@@ -224,6 +339,9 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                                 * SCALE_TO_PHYSICS
                                         ])
                                         .ccd_enabled(true)
+                                        .user_data(
+                                            UserData::new(BodyType::Tank, player1.player.id).into(),
+                                        )
                                         .build();
 
                                     let player1_collider = bodies.create_collider(
@@ -274,6 +392,9 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         .position(position)
                                         .linvel(velocity)
                                         .ccd_enabled(true)
+                                        .user_data(
+                                            UserData::new(BodyType::Tank, player2.player.id).into(),
+                                        )
                                         .build();
 
                                     let player2_collider = bodies.create_collider(
@@ -307,6 +428,14 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     player2.stats.hp = (player2.tank_info.characteristics.hp as f32
                                         * (1f32 + (player2.tank.level - 1) as f32 / 10f32))
                                         as i32;
+                                    player1.stats.damage =
+                                        (player1.tank_info.characteristics.damage
+                                            * (1f32 + (player1.tank.level - 1) as f32 / 10f32))
+                                            as i32;
+                                    player2.stats.damage =
+                                        (player2.tank_info.characteristics.damage
+                                            * (1f32 + (player2.tank.level - 1) as f32 / 10f32))
+                                            as i32;
 
                                     //notify players
                                     //player1
@@ -441,11 +570,6 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     &mut battle.players.1
                                 };
 
-                                /*let mut buf = Vec::new();
-                                let mut serializer = Serializer::new(&mut buf);
-                                battle.world.serialize(&mut serializer);
-                                std::fs::write("/home/konstantin/Desktop/rapier_test/world.physics", buf);*/
-
                                 //Body rotation
                                 let player_body =
                                     battle.world.bodies.get_mut(player.handle).unwrap();
@@ -528,6 +652,117 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                 player.stats.gun_rotation = position.gun_rotation;
                             }
                         }
+                        PhysicsCommand::PlayerShoot { id } => {
+                            if let Some(&index) = map.get(&id) {
+                                let battle = &mut battles[index];
+                                let player = if id == battle.players.0.player.id {
+                                    &mut battle.players.0
+                                } else {
+                                    &mut battle.players.1
+                                };
+                                let mut point = *battle
+                                    .world
+                                    .bodies
+                                    .get(player.handle)
+                                    .unwrap()
+                                    .translation();
+                                let gun_angle = player.stats.gun_angle
+                                    + battle
+                                        .world
+                                        .bodies
+                                        .get(player.handle)
+                                        .unwrap()
+                                        .rotation()
+                                        .angle();
+
+                                point -= vector![
+                                    player.tank_info.graphics_info.tank_width as f32,
+                                    -(player.tank_info.graphics_info.tank_height as f32)
+                                ] / 2f32
+                                    * SCALE_TO_PHYSICS;
+                                let size = gun_sizes
+                                    .get(player.tank_info.graphics_info.tank_gun_name.as_str())
+                                    .unwrap();
+                                let rotation_point = point
+                                    + vector![
+                                        (player.tank_info.graphics_info.gun_x
+                                            + player.tank_info.graphics_info.gun_origin_x)
+                                            as f32,
+                                        -((player.tank_info.graphics_info.gun_y
+                                            + player.tank_info.graphics_info.gun_origin_y)
+                                            as f32)
+                                    ] * SCALE_TO_PHYSICS;
+                                point += vector![
+                                    player.tank_info.graphics_info.gun_x as f32 + size.x / 2f32,
+                                    -(player.tank_info.graphics_info.gun_y as f32) - size.y
+                                ] * SCALE_TO_PHYSICS;
+                                let new_x = (point.x - rotation_point.x) * gun_angle.cos()
+                                    - (point.y - rotation_point.y) * gun_angle.sin()
+                                    + rotation_point.x;
+                                let new_y = (point.x - rotation_point.x) * gun_angle.sin()
+                                    + (point.y - rotation_point.y) * gun_angle.cos()
+                                    + rotation_point.y;
+                                point = vector![new_x, new_y];
+                                let mut position = Isometry::new(point, 0.0);
+                                position
+                                    .append_rotation_wrt_center_mut(&UnitComplex::new(gun_angle));
+                                let velocity = vector![
+                                    player.tank_info.characteristics.bullet_speed
+                                        * SCALE_TO_PHYSICS
+                                        * (position.rotation.angle() - 90f32.to_radians()).cos(),
+                                    player.tank_info.characteristics.bullet_speed
+                                        * SCALE_TO_PHYSICS
+                                        * (position.rotation.angle() - 90f32.to_radians()).sin()
+                                ];
+
+                                let bullet_body = RigidBodyBuilder::dynamic()
+                                    .position(position)
+                                    .linvel(velocity)
+                                    .ccd_enabled(true)
+                                    .user_data(
+                                        UserData::new(BodyType::Bullet, player.player.id).into(),
+                                    )
+                                    .build();
+
+                                let bullet_collider = bullets.create_collider(
+                                    &player.tank_info.graphics_info.bullet_name,
+                                    bullet_sizes
+                                        .get(player.tank_info.graphics_info.bullet_name.as_str())
+                                        .unwrap()
+                                        .x as f32
+                                        * SCALE_TO_PHYSICS,
+                                );
+                                let bullet_body_handle = battle.world.bodies.insert(bullet_body);
+                                let handle = battle.world.colliders.insert_with_parent(
+                                    bullet_collider,
+                                    bullet_body_handle,
+                                    &mut battle.world.bodies,
+                                );
+                                battle
+                                    .world
+                                    .colliders
+                                    .get_mut(handle)
+                                    .unwrap()
+                                    .set_position_wrt_parent(Isometry::new(
+                                        -bullet_sizes
+                                            .get(
+                                                player.tank_info.graphics_info.bullet_name.as_str(),
+                                            )
+                                            .unwrap()
+                                            / 2f32
+                                            * SCALE_TO_PHYSICS,
+                                        0.0,
+                                    ));
+
+                                let mut buf = Vec::new();
+                                let mut serializer = Serializer::new(&mut buf);
+                                battle.world.serialize(&mut serializer);
+                                std::fs::write(
+                                    "/home/konstantin/Desktop/rapier_test/world.physics",
+                                    buf,
+                                );
+                            }
+                        }
                     },
                     Err(e) => {
                         if e == TryRecvError::Disconnected {
@@ -543,6 +778,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                     battles[i].step = Instant::now();
                     battles[i].time += step;
                     battles[i].world.integration_parameters.dt = step;
+                    battles[i].world.integration_parameters.min_ccd_dt = step / 100f32;
                     battles[i].physics_step();
                     //notify players
                     //player1
@@ -604,20 +840,20 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                         }
                     }
 
-                    let my_pos = battles[i]
+                    let my_pos = *battles[i]
                         .world
                         .bodies
                         .get(battles[i].players.0.handle)
                         .unwrap()
-                        .position()
-                        .clone();
-                    let op_pos = battles[i]
+                        .position();
+
+                    let op_pos = *battles[i]
                         .world
                         .bodies
                         .get(battles[i].players.1.handle)
                         .unwrap()
-                        .position()
-                        .clone();
+                        .position();
+
                     let game_packet = GamePacket {
                         time_left: battles[i].time as u16,
                         my_data: GamePlayerData {
@@ -646,7 +882,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                         .players
                         .0
                         .conn
-                        .send_datagram(bytes::Bytes::copy_from_slice(&buf));
+                        .send_datagram(bytes::Bytes::from(buf));
 
                     //player2
                     let game_packet = GamePacket {
@@ -677,7 +913,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                         .players
                         .1
                         .conn
-                        .send_datagram(bytes::Bytes::copy_from_slice(&buf));
+                        .send_datagram(bytes::Bytes::from(buf));
                 }
             }
         }
@@ -708,7 +944,9 @@ fn revert_angle_by_y(alpha: f32) -> f32 {
 }
 
 fn attach_box(bodies: &mut RigidBodySet, colliders: &mut ColliderSet, width: f32, height: f32) {
-    let rigid_body = RigidBodyBuilder::fixed().build();
+    let rigid_body = RigidBodyBuilder::fixed()
+        .user_data(UserData::new(BodyType::Other, 0i64).into())
+        .build();
     let points = vec![
         point![0.0, 0.0],
         point![width, 0.0],
@@ -888,8 +1126,8 @@ impl BodyEditorLoader {
                 .vertices
                 .iter()
                 .map(|f| {
-                    let mut f = f.clone();
-                    f.apply(|e| *e = *e * scale);
+                    let mut f = *f;
+                    f.apply(|e| *e *= scale);
                     f
                 })
                 .collect();
@@ -906,7 +1144,9 @@ impl BodyEditorLoader {
             ));
         }
 
-        ColliderBuilder::compound(shapes).build()
+        ColliderBuilder::compound(shapes)
+            .active_hooks(ActiveHooks::FILTER_CONTACT_PAIRS | ActiveHooks::FILTER_INTERSECTION_PAIR)
+            .build()
     }
 
     fn body_exists(&self, name: &str) -> bool {

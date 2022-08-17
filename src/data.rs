@@ -107,6 +107,7 @@ pub enum Packet {
 
     //Without responses
     LeaveMatchMakerRequest,
+    Shoot,
 }
 
 //This packet server sends to client

@@ -331,6 +331,12 @@ impl Server {
                     .send(BalancerCommand::RemovePlayer(id.unwrap()))
                     .unwrap();
             }
+            data::Packet::Shoot => {
+                if let Some(client) = CLIENTS.get().get(&conn.stable_id()) {
+                    let cmd = PhysicsCommand::PlayerShoot { id: client.id };
+                    PHYSICS.get().send(cmd).unwrap();
+                }
+            }
             _ => {
                 error!("wrong packet came from uni stream!");
             }

@@ -40,7 +40,7 @@ fast_rsync = "0.1.4"
 rand = "0.8.5"
 regex = "1.6.0"
 
-minstant = "0.1.1"
+minstant = "0.1.2"
 strum = { version = "0.24.1", features = ["derive"] }
 
 rapier2d = { version = "0.14.0", features = ["simd-stable", "serde-serialize"] }

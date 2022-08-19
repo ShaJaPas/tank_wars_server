@@ -108,6 +108,11 @@ pub enum Packet {
     //Without responses
     LeaveMatchMakerRequest,
     Shoot,
+    Explosion {
+        x: f32,
+        y: f32,
+        hit: bool,
+    },
 }
 
 //This packet server sends to client
@@ -137,12 +142,11 @@ pub struct GamePlayerData {
     pub bullets: Vec<BulletData>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BulletData {
     pub x: f32,
     pub y: f32,
     pub rotation: f32,
-    pub name: String,
 }
 
 #[derive(Debug)]

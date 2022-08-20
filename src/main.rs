@@ -76,7 +76,7 @@ fn main() -> Result<()> {
                     .with_writer(log)
                     .map_writer(move |f| {
                         f.with_min_level(tracing::Level::DEBUG)
-                            .or_else(|| std::io::stdout())
+                            .or_else(std::io::stdout)
                     })
                     .finish(),
             )?;

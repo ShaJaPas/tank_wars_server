@@ -9,7 +9,7 @@ pub struct TankInfo {
     pub characteristics: TankCharacteristics,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TankGraphicsInfo {
     pub bullet_name: String,

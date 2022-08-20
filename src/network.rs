@@ -441,6 +441,17 @@ impl Server {
                         let packet = data::Packet::FilesSyncResponse { file_names: files };
                         packet.serialize(&mut serializer)?;
                         send.write_all(&buf).await?;
+
+                        //Check if player already is in battle
+                        if let Some(id) = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id) {
+                            PHYSICS
+                                .get()
+                                .send(PhysicsCommand::NotifyPlayerAboutMatch {
+                                    id,
+                                    new_conn: conn.clone(),
+                                })
+                                .unwrap();
+                        }
                     }
                     data::Packet::PlayerProfileRequest { nickname } => {
                         let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);

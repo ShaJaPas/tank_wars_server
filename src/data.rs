@@ -102,6 +102,7 @@ pub enum Packet {
         map: Map,
         opponent_nick: String,
         opponent_tank: Tank,
+        my_tank: Tank,
         initial_packet: GamePacket,
     },
 

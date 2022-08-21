@@ -1106,6 +1106,10 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                         map.remove(&battles[i].players.0.player.id);
                         map.remove(&battles[i].players.1.player.id);
 
+                        if battles.len() - 1 != i{
+                            *map.get_mut(&battles[battles.len() - 1].players.0.player.id).unwrap() = i;
+                            *map.get_mut(&battles[battles.len() - 1].players.1.player.id).unwrap() = i;
+                        }
                         let battle = battles.swap_remove(i);
                         std::thread::spawn(move || {
                             crate::db::update_player(&battle.players.0.player).unwrap();

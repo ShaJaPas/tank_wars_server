@@ -12,8 +12,8 @@ use tokio::sync::mpsc::{
 };
 
 use crate::data::{
-    BulletData, GamePacket, GamePlayerData, Map, Packet, Player, PlayerPosition, Tank, TankInfo,
-    TANKS,
+    BattleResult, BattleResultStruct, BulletData, GamePacket, GamePlayerData, Map, Packet, Player,
+    PlayerPosition, Tank, TankInfo, TANKS,
 };
 
 type Result<T> = color_eyre::Result<T>;
@@ -23,6 +23,152 @@ const WAIT_TIME: f32 = 5f32;
 const MAX_BATTLE_TIME: f32 = 60f32 * 3f32;
 const SCALE_TO_PHYSICS: f32 = 1f32 / 50f32;
 const SCALE_TO_PIXELS: f32 = 50f32;
+
+macro_rules! send_results {
+    // macth like arm for macro
+    ($x:ident, $gen:ident, $a:tt, $b:tt, $draw:expr) => {
+        // macro expand to this code
+        let acc = $x.players.$b.stats.succeeded_shots as f32 / $x.players.$b.stats.shots as f32;
+        let eff = (acc + 0.5f32)
+            * if ($x.players.$b.stats.damage_dealt as f32 / $x.players.$b.stats.damage_taken as f32)
+                .is_normal()
+            {
+                ($x.players.$b.stats.damage_dealt as f32 / $x.players.$b.stats.damage_taken as f32)
+            } else {
+                1f32
+            };
+
+        let mut win_results = BattleResultStruct {
+            result: BattleResult::Victory,
+            trophies: 30
+                + ($x.players.$a.player.get_efficiency() - $x.players.$b.player.get_efficiency())
+                    as i32,
+            xp: ((if eff.is_normal() { eff } else { 0f32 }) * 15f32) as i32,
+            coins: $gen.gen_range(70..=100)
+                + $gen.gen_range(10..=15)
+                    * ($x.players.$a.player.rank_level - $x.players.$b.player.rank_level),
+            damage_dealt: $x.players.$b.stats.damage_dealt,
+            damage_taken: $x.players.$b.stats.damage_taken,
+            accuracy: if acc.is_normal() { acc } else { 0f32 },
+            efficiency: if eff.is_normal() { eff } else { 0f32 },
+        };
+
+        let acc = $x.players.$a.stats.succeeded_shots as f32 / $x.players.$a.stats.shots as f32;
+        let eff = (acc + 0.5f32)
+            * if ($x.players.$a.stats.damage_dealt as f32 / $x.players.$a.stats.damage_taken as f32)
+                .is_normal()
+            {
+                ($x.players.$a.stats.damage_dealt as f32 / $x.players.$a.stats.damage_taken as f32)
+            } else {
+                1f32
+            };
+
+        let mut lose_results = BattleResultStruct {
+            result: BattleResult::Defeat,
+            trophies: -30
+                - ($x.players.$a.player.get_efficiency() - $x.players.$b.player.get_efficiency())
+                    as i32,
+            xp: ((if eff.is_normal() { eff } else { 0f32 }) * 15f32) as i32,
+            coins: $gen.gen_range(15..=20)
+                + $gen.gen_range(10..=15)
+                    * ($x.players.$b.player.rank_level - $x.players.$a.player.rank_level),
+            damage_dealt: $x.players.$a.stats.damage_dealt,
+            damage_taken: $x.players.$a.stats.damage_taken,
+            accuracy: if acc.is_normal() { acc } else { 0f32 },
+            efficiency: if eff.is_normal() { eff } else { 0f32 },
+        };
+
+        if $draw {
+            win_results.result = BattleResult::Draw;
+            win_results.xp = 0;
+            win_results.coins = 0;
+            win_results.trophies = 0;
+            lose_results.result = BattleResult::Draw;
+            lose_results.xp = 0;
+            lose_results.coins = 0;
+            lose_results.trophies = 0;
+        }
+        if !$draw {
+            $x.players.$b.player.victories_count += 1;
+        }
+        $x.players.$b.player.trophies += win_results.trophies;
+        $x.players.$b.player.xp += win_results.xp;
+        $x.players.$b.player.coins += win_results.coins;
+        let xp_bound = (3f32.powf($x.players.$b.player.rank_level as f32 / 10f32)
+            * $x.players.$b.player.rank_level as f32
+            * 50f32) as i32;
+        if $x.players.$b.player.xp >= xp_bound {
+            $x.players.$b.player.xp -= xp_bound;
+            $x.players.$b.player.rank_level += 1;
+        }
+        $x.players.$b.player.accuracy = ($x.players.$b.player.accuracy
+            * ($x.players.$b.player.battles_count as f32 - 1f32)
+            + win_results.accuracy)
+            / $x.players.$b.player.battles_count as f32;
+        $x.players.$b.player.damage_dealt = ($x.players.$b.player.damage_dealt
+            * $x.players.$b.player.battles_count
+            + win_results.damage_dealt)
+            / $x.players.$b.player.battles_count;
+        $x.players.$b.player.damage_taken = ($x.players.$b.player.damage_taken
+            * $x.players.$b.player.battles_count
+            + win_results.damage_taken)
+            / $x.players.$b.player.battles_count;
+
+        $x.players.$a.player.trophies =
+            0.max($x.players.$a.player.trophies + lose_results.trophies);
+        $x.players.$a.player.xp += lose_results.xp;
+        $x.players.$a.player.coins += lose_results.coins;
+        let xp_bound = (3f32.powf($x.players.$a.player.rank_level as f32 / 10f32)
+            * $x.players.$a.player.rank_level as f32
+            * 50f32) as i32;
+        if $x.players.$a.player.xp >= xp_bound {
+            $x.players.$a.player.xp -= xp_bound;
+            $x.players.$a.player.rank_level += 1;
+        }
+        $x.players.$a.player.accuracy = ($x.players.$a.player.accuracy
+            * ($x.players.$a.player.battles_count as f32 - 1f32)
+            + win_results.accuracy)
+            / $x.players.$a.player.battles_count as f32;
+        $x.players.$a.player.damage_dealt = ($x.players.$a.player.damage_dealt
+            * $x.players.$a.player.battles_count
+            + win_results.damage_dealt)
+            / $x.players.$a.player.battles_count;
+        $x.players.$a.player.damage_taken = ($x.players.$a.player.damage_taken
+            * $x.players.$a.player.battles_count
+            + win_results.damage_taken)
+            / $x.players.$a.player.battles_count;
+
+        let winner_conn = $x.players.$b.conn.clone();
+        let win_profile = (*$x.players.$b.player).clone();
+        let loser_conn = $x.players.$a.conn.clone();
+        let loser_profile = (*$x.players.$a.player).clone();
+        if let Some(_) = futures::executor::block_on(async move {
+            let data = Packet::BattleResultResponse {
+                profile: win_profile,
+                result: win_results,
+            };
+            let mut buf = Vec::new();
+            let mut serializer = Serializer::new(&mut buf);
+            data.serialize(&mut serializer).unwrap();
+            let mut uni = winner_conn.open_uni().await?;
+            uni.write_all(&buf).await?;
+            uni.finish().await?;
+            let data = Packet::BattleResultResponse {
+                profile: loser_profile,
+                result: lose_results,
+            };
+            let mut buf = Vec::new();
+            let mut serializer = Serializer::new(&mut buf);
+            data.serialize(&mut serializer).unwrap();
+            let mut uni = loser_conn.open_uni().await?;
+            uni.write_all(&buf).await?;
+            uni.finish().await?;
+            Result::<()>::Ok(())
+        })
+        .err()
+        {}
+    };
+}
 
 #[derive(Debug)]
 pub struct BalancedPlayer(pub Box<Player>, pub i32, pub Connection);
@@ -943,10 +1089,28 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                         || battles[i].players.0.stats.hp == 0
                         || battles[i].players.1.stats.hp == 0
                     {
+                        battles[i].players.0.player.battles_count += 1;
+                        battles[i].players.1.player.battles_count += 1;
+
+                        if battles[i].players.0.stats.hp == 0 {
+                            let battle = &mut battles[i];
+                            send_results!(battle, gen, 0, 1, false);
+                        } else if battles[i].players.1.stats.hp == 0 {
+                            let battle = &mut battles[i];
+                            send_results!(battle, gen, 1, 0, false);
+                        } else {
+                            let battle = &mut battles[i];
+                            send_results!(battle, gen, 1, 0, true);
+                        }
+
                         map.remove(&battles[i].players.0.player.id);
                         map.remove(&battles[i].players.1.player.id);
 
-                        battles.swap_remove(i);
+                        let battle = battles.swap_remove(i);
+                        std::thread::spawn(move || {
+                            crate::db::update_player(&battle.players.0.player).unwrap();
+                            crate::db::update_player(&battle.players.1.player).unwrap();
+                        });
                         continue;
                     }
 

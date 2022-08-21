@@ -114,6 +114,31 @@ pub enum Packet {
         y: f32,
         hit: bool,
     },
+
+    //Without requests
+    BattleResultResponse {
+        result: BattleResultStruct,
+        profile: Player,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BattleResultStruct {
+    pub result: BattleResult,
+    pub trophies: i32,
+    pub xp: i32,
+    pub coins: i32,
+    pub damage_dealt: i32,
+    pub damage_taken: i32,
+    pub accuracy: f32,
+    pub efficiency: f32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BattleResult {
+    Draw,
+    Victory,
+    Defeat,
 }
 
 //This packet server sends to client

@@ -579,17 +579,57 @@ impl Server {
                             db::update_player(&player)?;
                             let packet = data::Packet::GetDailyItemsResponse {
                                 items: player.daily_items,
-                                updated: true,
+                                time: Some(time),
                             };
                             packet.serialize(&mut serializer)?;
                             send.write_all(&buf).await?;
                         } else {
                             let packet = data::Packet::GetDailyItemsResponse {
                                 items: player.daily_items,
-                                updated: false,
+                                time: None,
                             };
                             packet.serialize(&mut serializer)?;
                             send.write_all(&buf).await?;
+                        }
+                    }
+                    data::Packet::GetDailyItemRequest { id: number } => {
+                        let id = CLIENTS.get().get_mut(&conn.stable_id()).map(|f| f.id);
+                        if id.is_none() {
+                            error!("unauthorized access");
+                            return Ok(enum_name);
+                        }
+                        let mut buf = Vec::new();
+                        let mut serializer = Serializer::new(&mut buf);
+                        let mut player = db::get_player_by_id(id.unwrap()).unwrap();
+                        let item = player.daily_items.get_mut(number as usize);
+                        if let Some(item) = item {
+                            if !item.bought && player.coins >= item.price {
+                                item.bought = true;
+                                player.coins -= item.price;
+                                let tank = player.tanks.iter_mut().find(|f| f.id == item.tank_id);
+                                if let Some(tank) = tank {
+                                    tank.count += item.count;
+                                } else {
+                                    let tank = data::Tank {
+                                        id: item.tank_id,
+                                        level: 1,
+                                        count: 0,
+                                    };
+                                    player.tanks.push(tank);
+                                }
+                                let response = data::Packet::GetDailyItemResponse {
+                                    player: Some(player.clone())
+                                };
+                                response.serialize(&mut serializer)?;
+                                send.write_all(&buf).await?;
+                                db::update_player(&player)?;
+                            } else {
+                                let response = data::Packet::GetDailyItemResponse {
+                                    player: None
+                                };
+                                response.serialize(&mut serializer)?;
+                                send.write_all(&buf).await?;
+                            }
                         }
                     }
                     _ => {

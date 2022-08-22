@@ -5,6 +5,7 @@ mod player;
 mod tank;
 mod tank_info;
 
+use chrono::NaiveDateTime;
 use quinn::Connection;
 use rand::Rng;
 use std::collections::HashMap;
@@ -78,6 +79,14 @@ pub enum Packet {
         chest: Chest,
     },
 
+    GetDailyItemRequest {
+        id: i32,
+    },
+
+    GetDailyItemResponse {
+        player: Option<Player>,
+    },
+
     UpgradeTankRequest {
         id: i32,
     },
@@ -90,7 +99,7 @@ pub enum Packet {
 
     GetDailyItemsResponse {
         items: Vec<DailyItem>,
-        updated: bool,
+        time: Option<NaiveDateTime>,
     },
 
     JoinMatchMakerRequest {

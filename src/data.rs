@@ -154,6 +154,7 @@ pub enum BattleResult {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GamePacket {
     pub time_left: u16,
+    pub frame_num: u16,
     pub my_data: GamePlayerData,
     pub opponent_data: GamePlayerData,
 }
@@ -161,6 +162,7 @@ pub struct GamePacket {
 //This packet client sends to server
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PlayerPosition {
+    pub frame_num: u16,
     pub body_rotation: f32,
     pub gun_rotation: f32,
     pub moving: bool,

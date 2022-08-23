@@ -618,15 +618,13 @@ impl Server {
                                     player.tanks.push(tank);
                                 }
                                 let response = data::Packet::GetDailyItemResponse {
-                                    player: Some(player.clone())
+                                    player: Some(player.clone()),
                                 };
                                 response.serialize(&mut serializer)?;
                                 send.write_all(&buf).await?;
                                 db::update_player(&player)?;
                             } else {
-                                let response = data::Packet::GetDailyItemResponse {
-                                    player: None
-                                };
+                                let response = data::Packet::GetDailyItemResponse { player: None };
                                 response.serialize(&mut serializer)?;
                                 send.write_all(&buf).await?;
                             }

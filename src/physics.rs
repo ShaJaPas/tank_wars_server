@@ -181,6 +181,7 @@ struct WorldPlayer<'a> {
     stats: PlayerInfo,
     handle: RigidBodyHandle,
     connected: bool,
+    frame: u16,
 }
 
 #[derive(Default)]
@@ -219,6 +220,7 @@ impl TryFrom<BalancedPlayer> for WorldPlayer<'_> {
             stats: PlayerInfo::default(),
             handle: RigidBodyHandle::invalid(),
             connected: true,
+            frame: 0,
         })
     }
 }
@@ -682,6 +684,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                             cool_down: player2.tank_info.characteristics.reloading,
                                             bullets: Vec::new(),
                                         },
+                                        frame_num: 0u16,
                                     };
                                     let data = Packet::MapFoundResponse {
                                         wait_time: WAIT_TIME,
@@ -740,6 +743,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                             cool_down: player2.tank_info.characteristics.reloading,
                                             bullets: Vec::new(),
                                         },
+                                        frame_num: 0u16,
                                     };
                                     let data = Packet::MapFoundResponse {
                                         wait_time: WAIT_TIME,
@@ -770,6 +774,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         step: Instant::now(),
                                         time: MAX_BATTLE_TIME + WAIT_TIME,
                                         collision_recv,
+                                        frame: 0u16,
                                     };
 
                                     map.insert(battle.players.0.player.id, battles.len());
@@ -786,91 +791,96 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                 } else {
                                     &mut battle.players.1
                                 };
-                                if battle.time <= MAX_BATTLE_TIME {
-                                    //Body rotation
-                                    let player_body =
-                                        battle.world.bodies.get_mut(player.handle).unwrap();
-                                    let back_angle =
-                                        revert_angle_by_y(player_body.rotation().angle());
+                                if player.frame < position.frame_num {
+                                    player.frame = position.frame_num;
+                                    if battle.time <= MAX_BATTLE_TIME {
+                                        //Body rotation
+                                        let player_body =
+                                            battle.world.bodies.get_mut(player.handle).unwrap();
+                                        let back_angle =
+                                            revert_angle_by_y(player_body.rotation().angle());
 
-                                    let mut diff = 0f32;
-                                    if position.body_rotation != 0f32 {
-                                        diff =
-                                            position.body_rotation - player_body.rotation().angle();
-                                        diff = diff.rem_euclid(360f32.to_radians())
-                                            - 180f32.to_radians();
-                                    }
-                                    let mut back_diff = 0f32;
-                                    if position.body_rotation != 0f32 {
-                                        back_diff = position.body_rotation - back_angle;
-                                        back_diff = back_diff.rem_euclid(360f32.to_radians())
-                                            - 180f32.to_radians();
-                                    }
-                                    let ang_vel = player
-                                        .tank_info
-                                        .characteristics
-                                        .body_rotate_degrees
-                                        .to_radians();
+                                        let mut diff = 0f32;
+                                        if position.body_rotation != 0f32 {
+                                            diff = position.body_rotation
+                                                - player_body.rotation().angle();
+                                            diff = diff.rem_euclid(360f32.to_radians())
+                                                - 180f32.to_radians();
+                                        }
+                                        let mut back_diff = 0f32;
+                                        if position.body_rotation != 0f32 {
+                                            back_diff = position.body_rotation - back_angle;
+                                            back_diff = back_diff.rem_euclid(360f32.to_radians())
+                                                - 180f32.to_radians();
+                                        }
+                                        let ang_vel = player
+                                            .tank_info
+                                            .characteristics
+                                            .body_rotate_degrees
+                                            .to_radians();
 
-                                    player_body.set_angvel(0f32, true);
-                                    if position.body_rotation != 0f32 {
-                                        if diff.abs() < back_diff.abs() {
-                                            let alpha = player_body.rotation().angle();
-                                            let direction = direction_by_2_angles(
-                                                alpha,
-                                                position.body_rotation,
-                                            );
-                                            if diff.abs() <= ang_vel * UPDATE_TIME {
-                                                player_body.set_angvel(0f32, true);
+                                        player_body.set_angvel(0f32, true);
+                                        if position.body_rotation != 0f32 {
+                                            if diff.abs() < back_diff.abs() {
+                                                let alpha = player_body.rotation().angle();
+                                                let direction = direction_by_2_angles(
+                                                    alpha,
+                                                    position.body_rotation,
+                                                );
+                                                if diff.abs() <= ang_vel * UPDATE_TIME {
+                                                    player_body.set_angvel(0f32, true);
+                                                } else {
+                                                    player_body
+                                                        .set_angvel(direction * ang_vel, true);
+                                                }
                                             } else {
-                                                player_body.set_angvel(direction * ang_vel, true);
-                                            }
-                                        } else {
-                                            let direction = direction_by_2_angles(
-                                                back_angle,
-                                                position.body_rotation,
-                                            );
-                                            if back_diff.abs() <= ang_vel * UPDATE_TIME {
-                                                player_body.set_angvel(0f32, true);
-                                            } else {
-                                                player_body.set_angvel(direction * ang_vel, true);
+                                                let direction = direction_by_2_angles(
+                                                    back_angle,
+                                                    position.body_rotation,
+                                                );
+                                                if back_diff.abs() <= ang_vel * UPDATE_TIME {
+                                                    player_body.set_angvel(0f32, true);
+                                                } else {
+                                                    player_body
+                                                        .set_angvel(direction * ang_vel, true);
+                                                }
                                             }
                                         }
-                                    }
-                                    if position.moving {
-                                        if diff.abs() > back_diff.abs() {
-                                            let velocity = vector![
-                                                player.tank_info.characteristics.velocity
-                                                    * SCALE_TO_PHYSICS
-                                                    * (player_body.rotation().angle()
-                                                        - 90f32.to_radians())
-                                                    .cos(),
-                                                player.tank_info.characteristics.velocity
-                                                    * SCALE_TO_PHYSICS
-                                                    * (player_body.rotation().angle()
-                                                        - 90f32.to_radians())
-                                                    .sin()
-                                            ];
-                                            player_body.set_linvel(velocity, true);
+                                        if position.moving {
+                                            if diff.abs() > back_diff.abs() {
+                                                let velocity = vector![
+                                                    player.tank_info.characteristics.velocity
+                                                        * SCALE_TO_PHYSICS
+                                                        * (player_body.rotation().angle()
+                                                            - 90f32.to_radians())
+                                                        .cos(),
+                                                    player.tank_info.characteristics.velocity
+                                                        * SCALE_TO_PHYSICS
+                                                        * (player_body.rotation().angle()
+                                                            - 90f32.to_radians())
+                                                        .sin()
+                                                ];
+                                                player_body.set_linvel(velocity, true);
+                                            } else {
+                                                let velocity = vector![
+                                                    player.tank_info.characteristics.velocity
+                                                        * 0.5f32
+                                                        * SCALE_TO_PHYSICS
+                                                        * (back_angle - 90f32.to_radians()).cos(),
+                                                    player.tank_info.characteristics.velocity
+                                                        * 0.5f32
+                                                        * SCALE_TO_PHYSICS
+                                                        * (back_angle - 90f32.to_radians()).sin()
+                                                ];
+                                                player_body.set_linvel(velocity, true);
+                                            }
                                         } else {
-                                            let velocity = vector![
-                                                player.tank_info.characteristics.velocity
-                                                    * 0.5f32
-                                                    * SCALE_TO_PHYSICS
-                                                    * (back_angle - 90f32.to_radians()).cos(),
-                                                player.tank_info.characteristics.velocity
-                                                    * 0.5f32
-                                                    * SCALE_TO_PHYSICS
-                                                    * (back_angle - 90f32.to_radians()).sin()
-                                            ];
-                                            player_body.set_linvel(velocity, true);
+                                            player_body.set_linvel(Vector::zeros(), true);
                                         }
-                                    } else {
-                                        player_body.set_linvel(Vector::zeros(), true);
-                                    }
 
-                                    //Gun rotation
-                                    player.stats.gun_rotation = position.gun_rotation;
+                                        //Gun rotation
+                                        player.stats.gun_rotation = position.gun_rotation;
+                                    }
                                 }
                             }
                         }
@@ -1042,6 +1052,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                         cool_down: 0f32,
                                         bullets: Vec::new(),
                                     },
+                                    frame_num: battle.frame,
                                 };
                                 let data = Packet::MapFoundResponse {
                                     wait_time: 0f32.max(battle.time - MAX_BATTLE_TIME),
@@ -1126,6 +1137,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                     battles[i].world.integration_parameters.dt = step;
                     battles[i].world.integration_parameters.min_ccd_dt = step / 100f32;
                     battles[i].physics_step();
+                    battles[i].frame += 1;
                     battles[i].players.0.stats.cool_down =
                         0f32.max(battles[i].players.0.stats.cool_down - step);
                     battles[i].players.1.stats.cool_down =
@@ -1399,6 +1411,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                             cool_down: 0f32,
                             bullets: player2_bullets.clone(),
                         },
+                        frame_num: battles[i].frame,
                     };
                     let mut buf = Vec::new();
                     let mut serializer = Serializer::new(&mut buf);
@@ -1434,6 +1447,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                             cool_down: battles[i].players.1.stats.cool_down,
                             bullets: player2_bullets,
                         },
+                        frame_num: battles[i].frame,
                     };
                     let mut buf = Vec::new();
                     let mut serializer = Serializer::new(&mut buf);
@@ -1541,6 +1555,7 @@ struct Battle<'a> {
     map: &'a Map,
     step: Instant,
     time: f32,
+    frame: u16,
     collision_recv: UnboundedReceiver<(CollisionEvent, Point<Real>)>,
 }
 

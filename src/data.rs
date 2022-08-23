@@ -25,6 +25,8 @@ use crate::physics::PhysicsCommand;
 
 pub static CLIENTS: state::Storage<dashmap::DashMap<usize, Client>> = state::Storage::new();
 
+pub static RUNTIME: state::Storage<tokio::runtime::Runtime> = state::Storage::new();
+
 pub static TANKS: state::Storage<Vec<TankInfo>> = state::Storage::new();
 
 pub static NICKNAME_REGEX: state::Storage<regex::Regex> = state::Storage::new();
@@ -114,7 +116,8 @@ pub enum Packet {
         my_tank: Tank,
         initial_packet: GamePacket,
     },
-
+    MapNotFoundResponse,
+    
     //Without responses
     LeaveMatchMakerRequest,
     Shoot,

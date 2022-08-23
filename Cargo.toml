@@ -1,13 +1,13 @@
 [package]
 name = "tank_wars_server"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
 argh = "0.1.8"
 
 tokio = { version = "1.20.1", features = ["macros", "rt-multi-thread", "fs", "sync"] }
-futures = { default-features = false, version = "0.3.23", features = ["executor"] }
+futures = { default-features = false, version = "0.3.23" }
 
 tracing = "0.1.36"
 tracing-subscriber = "0.3.15"

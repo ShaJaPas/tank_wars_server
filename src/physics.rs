@@ -13,7 +13,7 @@ use tokio::sync::mpsc::{
 
 use crate::data::{
     BattleResult, BattleResultStruct, BulletData, GamePacket, GamePlayerData, Map, Packet, Player,
-    PlayerPosition, Tank, TankInfo, TANKS,
+    PlayerPosition, Tank, TankInfo, RUNTIME, TANKS,
 };
 
 type Result<T> = color_eyre::Result<T>;
@@ -142,7 +142,7 @@ macro_rules! send_results {
         let win_profile = (*$x.players.$b.player).clone();
         let loser_conn = $x.players.$a.conn.clone();
         let loser_profile = (*$x.players.$a.player).clone();
-        if let Some(_) = futures::executor::block_on(async move {
+        RUNTIME.get().spawn(async move {
             let data = Packet::BattleResultResponse {
                 profile: win_profile,
                 result: win_results,
@@ -164,9 +164,7 @@ macro_rules! send_results {
             uni.write_all(&buf).await?;
             uni.finish().await?;
             Result::<()>::Ok(())
-        })
-        .err()
-        {}
+        });
     };
 }
 
@@ -540,11 +538,6 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     ));
                                     let player1_body = RigidBodyBuilder::dynamic()
                                         .position(position)
-                                        .linvel(vector![
-                                            0.0,
-                                            -player1.tank_info.characteristics.velocity
-                                                * SCALE_TO_PHYSICS
-                                        ])
                                         .ccd_enabled(true)
                                         .user_data(
                                             UserData::new(BodyType::Tank, player1.player.id).into(),
@@ -586,18 +579,9 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     position.append_rotation_wrt_center_mut(&UnitComplex::new(
                                         180f32.to_radians(),
                                     ));
-                                    let velocity = vector![
-                                        player2.tank_info.characteristics.velocity
-                                            * SCALE_TO_PHYSICS
-                                            * position.rotation.cos_angle(),
-                                        player2.tank_info.characteristics.velocity
-                                            * SCALE_TO_PHYSICS
-                                            * position.rotation.sin_angle()
-                                    ];
 
                                     let player2_body = RigidBodyBuilder::dynamic()
                                         .position(position)
-                                        .linvel(velocity)
                                         .ccd_enabled(true)
                                         .user_data(
                                             UserData::new(BodyType::Tank, player2.player.id).into(),
@@ -697,16 +681,13 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     let mut buf = Vec::new();
                                     let mut serializer = Serializer::new(&mut buf);
                                     data.serialize(&mut serializer).unwrap();
-                                    if futures::executor::block_on(async {
-                                        let mut uni = player1.conn.open_uni().await?;
+                                    let conn = player1.conn.clone();
+                                    RUNTIME.get().spawn(async move {
+                                        let mut uni = conn.open_uni().await?;
                                         uni.write_all(&buf).await?;
                                         uni.finish().await?;
                                         Result::<()>::Ok(())
-                                    })
-                                    .is_err()
-                                    {
-                                        player1.connected = false;
-                                    }
+                                    });
 
                                     //player2
                                     let game_packet = GamePacket {
@@ -756,16 +737,13 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     let mut buf = Vec::new();
                                     let mut serializer = Serializer::new(&mut buf);
                                     data.serialize(&mut serializer).unwrap();
-                                    if futures::executor::block_on(async {
-                                        let mut uni = player2.conn.open_uni().await?;
+                                    let conn = player2.conn.clone();
+                                    RUNTIME.get().spawn(async move {
+                                        let mut uni = conn.open_uni().await?;
                                         uni.write_all(&buf).await?;
                                         uni.finish().await?;
                                         Result::<()>::Ok(())
-                                    })
-                                    .is_err()
-                                    {
-                                        player2.connected = false;
-                                    }
+                                    });
 
                                     let battle = Battle {
                                         world,
@@ -1065,19 +1043,24 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                 let mut buf = Vec::new();
                                 let mut serializer = Serializer::new(&mut buf);
                                 data.serialize(&mut serializer).unwrap();
-                                if let Some(e) = futures::executor::block_on(async {
-                                    let mut uni = player.conn.open_uni().await?;
+                                let conn = player.conn.clone();
+                                RUNTIME.get().spawn(async move {
+                                    let mut uni = conn.open_uni().await?;
                                     uni.write_all(&buf).await?;
                                     uni.finish().await?;
                                     Result::<()>::Ok(())
-                                })
-                                .err()
-                                {
-                                    tracing::warn!(
-                                        "error occured while notification about battle {:?}",
-                                        e
-                                    );
-                                }
+                                });
+                            } else {
+                                let mut buf = Vec::new();
+                                let mut serializer = Serializer::new(&mut buf);
+                                Packet::MapNotFoundResponse.serialize(&mut serializer).unwrap();
+                                let conn = new_conn.clone();
+                                RUNTIME.get().spawn(async move {
+                                    let mut uni = conn.open_uni().await?;
+                                    uni.write_all(&buf).await?;
+                                    uni.finish().await?;
+                                    Result::<()>::Ok(())
+                                });
                             }
                         }
                     },
@@ -1124,7 +1107,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                 .unwrap() = i;
                         }
                         let battle = battles.swap_remove(i);
-                        std::thread::spawn(move || {
+                        RUNTIME.get().spawn_blocking(move || {
                             crate::db::update_player(&battle.players.0.player).unwrap();
                             crate::db::update_player(&battle.players.1.player).unwrap();
                         });
@@ -1178,26 +1161,17 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                 let mut buf = Vec::new();
                                 let mut serializer = Serializer::new(&mut buf);
                                 explosion.serialize(&mut serializer).unwrap();
-                                if futures::executor::block_on(async {
-                                    let mut uni = battles[i].players.0.conn.open_uni().await?;
+                                let conn1 = battles[i].players.0.conn.clone();
+                                let conn2 = battles[i].players.1.conn.clone();
+                                RUNTIME.get().spawn(async move {
+                                    let mut uni = conn1.open_uni().await?;
+                                    uni.write_all(&buf).await?;
+                                    uni.finish().await?;
+                                    let mut uni = conn2.open_uni().await?;
                                     uni.write_all(&buf).await?;
                                     uni.finish().await?;
                                     Result::<()>::Ok(())
-                                })
-                                .is_err()
-                                {
-                                    battles[i].players.0.connected = false;
-                                }
-                                if futures::executor::block_on(async {
-                                    let mut uni = battles[i].players.1.conn.open_uni().await?;
-                                    uni.write_all(&buf).await?;
-                                    uni.finish().await?;
-                                    Result::<()>::Ok(())
-                                })
-                                .is_err()
-                                {
-                                    battles[i].players.1.connected = false;
-                                }
+                                });
                                 match data2.body_type {
                                     BodyType::Bullet => {
                                         battles[i].remove_body(body2_handle);
@@ -1241,26 +1215,17 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                 let mut buf = Vec::new();
                                 let mut serializer = Serializer::new(&mut buf);
                                 explosion.serialize(&mut serializer).unwrap();
-                                if futures::executor::block_on(async {
-                                    let mut uni = battles[i].players.0.conn.open_uni().await?;
+                                let conn1 = battles[i].players.0.conn.clone();
+                                let conn2 = battles[i].players.1.conn.clone();
+                                RUNTIME.get().spawn(async move {
+                                    let mut uni = conn1.open_uni().await?;
+                                    uni.write_all(&buf).await?;
+                                    uni.finish().await?;
+                                    let mut uni = conn2.open_uni().await?;
                                     uni.write_all(&buf).await?;
                                     uni.finish().await?;
                                     Result::<()>::Ok(())
-                                })
-                                .is_err()
-                                {
-                                    battles[i].players.0.connected = false;
-                                }
-                                if futures::executor::block_on(async {
-                                    let mut uni = battles[i].players.1.conn.open_uni().await?;
-                                    uni.write_all(&buf).await?;
-                                    uni.finish().await?;
-                                    Result::<()>::Ok(())
-                                })
-                                .is_err()
-                                {
-                                    battles[i].players.1.connected = false;
-                                }
+                                });
 
                                 match data1.body_type {
                                     BodyType::Bullet => {

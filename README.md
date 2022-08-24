@@ -1,7 +1,8 @@
-Game server for **tank_wars_rs** game.\
+Game server for **tank_wars_rs** game.
+### Main components: ###
 Made with rust async runtime **Tokio** and based on **QUIC protocol** for real-time communication (with raw udp too).\
 For physics simulation it uses **rapier2d** rust library.\
-Database: **PostgreSQL** with Diesel ORM
+Database: **PostgreSQL** with **Diesel** ORM
 ### Lines of code ###
     ===============================================================================
      Language            Files        Lines         Code     Comments       Blanks

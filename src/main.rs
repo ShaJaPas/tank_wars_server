@@ -31,7 +31,7 @@ struct Cli {
     /// DB url to connect to
     #[argh(
         option,
-        default = "String::from_str(\"postgres://konstantin:123@localhost:5432/test\").unwrap()"
+        default = "String::from_str(\"postgres://konstantin:root@localhost:5432/test\").unwrap()"
     )]
     db_url: String,
 }

@@ -10,7 +10,6 @@ use quinn::Connection;
 use rand::Rng;
 use std::collections::HashMap;
 use strum::Display;
-use tokio::sync::mpsc::UnboundedSender;
 
 pub use chest::*;
 pub use daily_item::*;
@@ -31,10 +30,10 @@ pub static TANKS: state::Storage<Vec<TankInfo>> = state::Storage::new();
 
 pub static NICKNAME_REGEX: state::Storage<regex::Regex> = state::Storage::new();
 
-pub static MATCHMAKER: state::LocalStorage<UnboundedSender<BalancerCommand>> =
+pub static MATCHMAKER: state::LocalStorage<flume::Sender<BalancerCommand>> =
     state::LocalStorage::new();
 
-pub static PHYSICS: state::LocalStorage<UnboundedSender<PhysicsCommand>> =
+pub static PHYSICS: state::LocalStorage<flume::Sender<PhysicsCommand>> =
     state::LocalStorage::new();
 
 #[derive(Debug, Serialize, Deserialize, Display)]

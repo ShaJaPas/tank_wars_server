@@ -1,5 +1,6 @@
 use std::{collections::HashMap, str::FromStr};
 
+use flume::{Sender, TryRecvError, Receiver};
 use minstant::Instant;
 use quinn::Connection;
 use rand::Rng;
@@ -7,9 +8,6 @@ use rapier2d::{na::UnitComplex, prelude::*};
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::mpsc::{
-    error::TryRecvError, unbounded_channel, UnboundedReceiver, UnboundedSender,
-};
 
 use crate::data::{
     BattleResult, BattleResultStruct, BulletData, GamePacket, GamePlayerData, Map, Packet, Player,
@@ -328,7 +326,7 @@ impl PhysicsHooks for CustomPhysicsHooks {
 }
 
 struct ChannelledEventCollector {
-    collision_event_sender: UnboundedSender<(CollisionEvent, Point<Real>)>,
+    collision_event_sender: Sender<(CollisionEvent, Point<Real>)>,
 }
 
 impl EventHandler for ChannelledEventCollector {
@@ -391,7 +389,7 @@ mod tests {
     }
 }
 
-pub fn start() -> UnboundedSender<PhysicsCommand> {
+pub fn start() -> Sender<PhysicsCommand> {
     let mut object_sizes = HashMap::new();
     object_sizes.insert(ObjectConstants::RedBarrage as i32, point![96.0, 32.0]);
     object_sizes.insert(ObjectConstants::YellowBarrage as i32, point![104.0, 32.0]);
@@ -425,7 +423,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
     data = std::fs::read_to_string("Tanks/Bullets.polygons").unwrap();
     let bullets = BodyEditorLoader::from_json(&data).unwrap();
     drop(data);
-    let (send, mut recv) = unbounded_channel();
+    let (send, recv) = flume::unbounded();
 
     let mut map = HashMap::new();
     std::thread::spawn(move || {
@@ -445,7 +443,7 @@ pub fn start() -> UnboundedSender<PhysicsCommand> {
                                     Ok::<WorldPlayer, _>(mut player2),
                                 ) = (player1.try_into(), player2.try_into())
                                 {
-                                    let (collision_send, collision_recv) = unbounded_channel();
+                                    let (collision_send, collision_recv) = flume::unbounded();
                                     let event_handler = ChannelledEventCollector {
                                         collision_event_sender: collision_send,
                                     };
@@ -1521,7 +1519,7 @@ struct Battle<'a> {
     step: Instant,
     time: f32,
     frame: u16,
-    collision_recv: UnboundedReceiver<(CollisionEvent, Point<Real>)>,
+    collision_recv: Receiver<(CollisionEvent, Point<Real>)>,
 }
 
 impl Battle<'_> {

@@ -15,7 +15,6 @@ use minstant::Instant;
 use rmp_serde::{Deserializer, Serializer};
 use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
 #[allow(unused)]
@@ -37,11 +36,11 @@ impl Server {
         NICKNAME_REGEX.set(regex::Regex::new(r"[a-zA-Z]\w{5,14}").unwrap());
         db::ID_GEN.set({
             let gen = snowflake::SnowflakeIdGenerator::new(1, 1);
-            tokio::sync::Mutex::new(gen)
+            parking_lot::Mutex::new(gen)
         });
 
         //Balancer initialization
-        let (send, recv) = tokio::sync::mpsc::unbounded_channel::<BalancerCommand>();
+        let (send, recv) = flume::unbounded::<BalancerCommand>();
         let p_send = physics::start();
         MATCHMAKER.set(move || send.clone());
         PHYSICS.set(move || p_send.clone());
@@ -101,11 +100,11 @@ impl Server {
     //Prefers player with lowest number
     //Number only increments, so it is limited to i32::MAX_VALUE
     //TODO: improve
-    async fn balance_players(mut recv: UnboundedReceiver<BalancerCommand>) -> Result<()> {
+    async fn balance_players(recv: flume::Receiver<BalancerCommand>) -> Result<()> {
         const DIFF: u32 = 60;
         let mut number = 0;
         let mut list: Vec<(BalancedPlayer, i32)> = Vec::new();
-        while let Some(x) = recv.recv().await {
+        while let Ok(x) = recv.recv_async().await {
             match x {
                 BalancerCommand::AddPlayer {
                     player,
@@ -362,7 +361,7 @@ impl Server {
                         let mut buf = Vec::new();
                         let mut serializer = Serializer::new(&mut buf);
                         if client_id.is_none() {
-                            let id = db::ID_GEN.get().lock().await.real_time_generate();
+                            let id = db::ID_GEN.get().lock().real_time_generate();
                             let player = Player::new(id, os_id);
                             db::save(&player)?;
                             CLIENTS.get().get_mut(&conn.stable_id()).unwrap().id = id;

@@ -1,8 +1,9 @@
+use parking_lot::Mutex;
+
 use diesel::PgConnection;
 
 use crate::{data::Player, schema::players::dsl::*};
 use diesel::prelude::*;
-use tokio::sync::Mutex;
 
 pub static POOL: state::LocalStorage<PgConnection> = state::LocalStorage::new();
 
